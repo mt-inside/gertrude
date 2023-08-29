@@ -42,14 +42,6 @@ fn parse_many<'a>(i: &'a str, karma: &mut HashMap<UniCase<String>, i32>) -> IRes
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    go("");
-    go("no votes");
-    go("--");
-    go("bacon++");
-    go("bacon++. Oh dear emacs crashed");
-    go("Drivel about LISP. bacon++. Oh dear emacs crashed");
-    go("Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.");
-
     go_lurk().await?;
 
     Ok(())
@@ -88,14 +80,7 @@ async fn go_lurk() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn go(s: &str) {
-    let mut k = HashMap::new();
-    parse_many(s, &mut k).unwrap();
-    println!("{:?}", k);
-}
-
 fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {
-    // TODO: Actually test this parser before you deploy it!
     let mut p_karma = tuple((
         tag("karma"),
         opt(space1::<&str, nom::error::Error<&str>>),
@@ -140,5 +125,77 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
         Some(rest)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maplit::hashmap;
+    use std::collections::HashMap;
+
+    fn fix_map_types(m: HashMap<&str, i32>) -> HashMap<UniCase<String>, i32> {
+        let mut exp = HashMap::new();
+        exp.extend(
+            m.into_iter()
+                .map(move |(k, v)| (UniCase::new(k.to_owned()), v)),
+        );
+        exp
+    }
+
+    #[test]
+    fn test_parse_many() {
+        let cases = [
+            ("", hashmap![]),
+            ("no votes", hashmap![]),
+            ("--", hashmap![]),
+            ("bacon++", hashmap!["bacon"=> 1]),
+            ("bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
+            ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
+            ("Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.", hashmap!["bacon"=>2, "mt" => 1, "bb" =>-1]),
+        ];
+
+        for case in cases {
+            let mut k = HashMap::new();
+            assert_eq!(parse_many(case.0, &mut k), Ok(("", ())));
+            assert_eq!(k, fix_map_types(case.1));
+        }
+    }
+
+    #[test]
+    fn test_get_resp() {
+        let k = fix_map_types(hashmap![
+            "bacon" => 1,
+            "rust" => 666,
+            "LISP" => -666,
+        ]);
+        let k_rendered = format!("{:?}", k);
+        let cases = [("karma", k_rendered), ("karma bacon", "1".to_owned())];
+
+        for case in cases {
+            assert_eq!(get_resp(case.0, &k.clone()), case.1);
+        }
+    }
+
+    #[test]
+    fn test_get_dm() {
+        let cases = [
+            ("gertie", "#chan", "foo bar", None),
+            ("gertie", "#chan", "gertie foo bar", Some("foo bar")),
+            ("gertie", "#chan", "gertie: foo bar", Some("foo bar")),
+            ("gertie", "#chan", "gertie> foo bar", Some("foo bar")),
+            ("gertie", "#chan", "gertie, foo bar", Some("foo bar")),
+            ("gertie", "gertie", "foo bar", Some("foo bar")),
+            (
+                "gertie",
+                "gertie",
+                "gertie, foo bar",
+                Some("gertie, foo bar"),
+            ),
+        ];
+
+        for case in cases {
+            assert_eq!(get_dm(case.0, case.1, case.2), case.3);
+        }
     }
 }
