@@ -134,10 +134,10 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
 
     println!("Is it a DM? {:?}", p_dm(s));
 
-    if let Ok((rest, _)) = p_dm(s) {
-        Some(rest)
-    } else if target.eq(nick) {
+    if target.eq(nick) {
         Some(s)
+    } else if let Ok((rest, _)) = p_dm(s) {
+        Some(rest)
     } else {
         None
     }
