@@ -180,11 +180,18 @@ mod tests {
     fn test_get_resp() {
         let k = fix_map_types(hashmap![
             "bacon" => 1,
+            "blɸwback" => -1,
             "rust" => 666,
             "LISP" => -666,
         ]);
         let k_rendered = format!("{:?}", k);
-        let cases = [("karma", k_rendered), ("karma bacon", "1".to_owned())];
+        let cases = [
+            ("karma", k_rendered.as_str()),
+            ("karma bacon", "1"),
+            ("karma BaCoN", "1"),
+            ("karma lisp", "-666"),
+            ("karma blɸwback", "-1"),
+        ];
 
         for case in cases {
             assert_eq!(get_resp(case.0, &k.clone()), case.1);
