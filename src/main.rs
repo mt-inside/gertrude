@@ -11,13 +11,11 @@ use nom::{
 use std::collections::HashMap;
 use unicase::UniCase;
 
-fn parse_many<'a, 'b>(
-    i: &'a str,
-    karma: &'b mut HashMap<UniCase<String>, i32>,
-) -> IResult<&'a str, ()> {
+const TOKEN_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
+
+fn parse_many<'a>(i: &'a str, karma: &mut HashMap<UniCase<String>, i32>) -> IResult<&'a str, ()> {
     // TODO: nom-unicode. basically need a set of either: all token-admissable chars, or all non-token (space & punctuation)
-    let token_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
-    let words = terminated(is_a(token_chars), opt(is_not(token_chars)));
+    let words = terminated(is_a(TOKEN_CHARS), opt(is_not(TOKEN_CHARS)));
     let mut upvote = opt(terminated(
         alpha1::<&str, nom::error::Error<&str>>,
         tag("++"),
@@ -37,7 +35,6 @@ fn parse_many<'a, 'b>(
                 let count = karma.entry(UniCase::new(term.to_owned())).or_insert(0);
                 *count -= 1;
             }
-            ()
         },
     );
     parser(i)
@@ -72,19 +69,18 @@ async fn go_lurk() -> Result<(), anyhow::Error> {
     let mut stream = client.stream()?;
 
     while let Some(message) = stream.next().await.transpose()? {
-        println!("{:?}", message);
+        println!("Message: {:?}", message);
+        let nick = client.current_nickname();
         if let Command::PRIVMSG(ref recipient, ref text) = message.command {
-            if text.starts_with(client.current_nickname())
-                || recipient.eq(client.current_nickname())
-            {
-                let resp = get_resp(strip_nick(text, client.current_nickname()), &karma);
+            if let Some(msg) = get_dm(nick, recipient, text) {
+                let resp = get_resp(msg, &karma);
                 println!("Sending response to {:?}", message.response_target());
                 client.send_privmsg(message.response_target().unwrap(), resp)?;
             } else {
                 // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
                 let res = parse_many(text, &mut karma);
-                println!("{:?}", res);
-                println!("{:?}", karma);
+                println!("Token parsing result: {:?}", res);
+                println!("Karma now: {:?}", karma);
             }
         }
     }
@@ -92,13 +88,13 @@ async fn go_lurk() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn go(s: &str) -> () {
+fn go(s: &str) {
     let mut k = HashMap::new();
     parse_many(s, &mut k).unwrap();
     println!("{:?}", k);
 }
 
-fn get_resp<'a, 'b>(text: &'a str, karma: &'b HashMap<UniCase<String>, i32>) -> String {
+fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {
     // TODO: Actually test this parser before you deploy it!
     let mut p_karma = tuple((
         tag("karma"),
@@ -108,11 +104,11 @@ fn get_resp<'a, 'b>(text: &'a str, karma: &'b HashMap<UniCase<String>, i32>) -> 
     if let Ok((_rest, (_, _, arg))) = p_karma(text) {
         match arg {
             None => {
-                println!("karma all");
+                println!("Command: karma all");
                 format!("{:?}", karma)
             }
             Some(token) => {
-                println!("karma {}", token);
+                println!("Command: karma {}", token);
                 format!(
                     "{}",
                     karma.get(&UniCase::new(token.to_owned())).unwrap_or(&0)
@@ -124,9 +120,25 @@ fn get_resp<'a, 'b>(text: &'a str, karma: &'b HashMap<UniCase<String>, i32>) -> 
     }
 }
 
-fn strip_nick<'a, 'b>(s: &'a str, nick: &'b str) -> &'a str {
-    match s.strip_prefix(nick) {
-        Some(msg) => msg.trim_start_matches([':', '>']).trim_start(),
-        None => s,
+// fn strip_nick<'a, 'b>(s: &'a str, nick: &'b str) -> &'a str {
+//     match s.strip_prefix(nick) {
+//         Some(msg) => msg.trim_start_matches([':', '>']).trim_start(),
+//         None => s,
+//     }
+// }
+fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
+    let mut p_dm = tuple((
+        tag::<&str, &str, nom::error::Error<&str>>(nick),
+        is_not(TOKEN_CHARS),
+    ));
+
+    println!("Is it a DM? {:?}", p_dm(s));
+
+    if let Ok((rest, _)) = p_dm(s) {
+        Some(rest)
+    } else if target.eq(nick) {
+        Some(s)
+    } else {
+        None
     }
 }
