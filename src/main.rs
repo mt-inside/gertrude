@@ -9,8 +9,12 @@ use nom::{
     IResult,
 };
 use std::collections::HashMap;
+use unicase::UniCase;
 
-fn parse_many<'a, 'b>(i: &'a str, karma: &'b mut HashMap<String, i32>) -> IResult<&'a str, ()> {
+fn parse_many<'a, 'b>(
+    i: &'a str,
+    karma: &'b mut HashMap<UniCase<String>, i32>,
+) -> IResult<&'a str, ()> {
     // TODO: nom-unicode. basically need a set of either: all token-admissable chars, or all non-token (space & punctuation)
     let token_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
     let words = terminated(is_a(token_chars), opt(is_not(token_chars)));
@@ -27,10 +31,10 @@ fn parse_many<'a, 'b>(i: &'a str, karma: &'b mut HashMap<String, i32>) -> IResul
         || (),
         |(), item| {
             if let Ok((_, Some(term))) = upvote(item) {
-                let count = karma.entry(term.to_owned()).or_insert(0);
+                let count = karma.entry(UniCase::new(term.to_owned())).or_insert(0);
                 *count += 1;
             } else if let Ok((_, Some(term))) = downvote(item) {
-                let count = karma.entry(term.to_owned()).or_insert(0);
+                let count = karma.entry(UniCase::new(term.to_owned())).or_insert(0);
                 *count -= 1;
             }
             ()
