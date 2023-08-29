@@ -1,27 +1,31 @@
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
-    bytes::complete::{is_a, is_not, tag},
-    character::complete::{alpha1, space1},
+    bytes::complete::{tag, take_till1, take_while1},
     combinator::opt,
     multi::fold_many0,
     sequence::{terminated, tuple},
     IResult,
 };
+use nom_unicode::{
+    complete::{alphanumeric1, space1},
+    is_alphanumeric,
+};
 use std::collections::HashMap;
 use unicase::UniCase;
 
-const TOKEN_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
+fn is_alnumvote(c: char) -> bool {
+    is_alphanumeric(c) || c == '+' || c == '-'
+}
 
 fn parse_many<'a>(i: &'a str, karma: &mut HashMap<UniCase<String>, i32>) -> IResult<&'a str, ()> {
-    // TODO: nom-unicode. basically need a set of either: all token-admissable chars, or all non-token (space & punctuation)
-    let words = terminated(is_a(TOKEN_CHARS), opt(is_not(TOKEN_CHARS)));
+    let words = terminated(take_while1(is_alnumvote), opt(take_till1(is_alphanumeric))); // opt(not(alphanumeric1)) doesn't work
     let mut upvote = opt(terminated(
-        alpha1::<&str, nom::error::Error<&str>>,
+        alphanumeric1::<&str, nom::error::Error<&str>>,
         tag("++"),
     ));
     let mut downvote = opt(terminated(
-        alpha1::<&str, nom::error::Error<&str>>,
+        alphanumeric1::<&str, nom::error::Error<&str>>,
         tag("--"),
     ));
     let mut parser = fold_many0(
@@ -84,7 +88,7 @@ fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {
     let mut p_karma = tuple((
         tag("karma"),
         opt(space1::<&str, nom::error::Error<&str>>),
-        opt(alpha1), // TODO: use letters, derive +/- version from orig
+        opt(alphanumeric1),
     ));
     if let Ok((_rest, (_, _, arg))) = p_karma(text) {
         match arg {
@@ -114,7 +118,7 @@ fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {
 fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
     let mut p_dm = tuple((
         tag::<&str, &str, nom::error::Error<&str>>(nick),
-        is_not(TOKEN_CHARS),
+        take_till1(is_alphanumeric),
     ));
 
     println!("Is it a DM? {:?}", p_dm(s));
@@ -153,6 +157,11 @@ mod tests {
             ("bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
             ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
             ("Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.", hashmap!["bacon"=>2, "mt" => 1, "bb" =>-1]),
+            ("blɸwback++", hashmap!["blɸwback"=> 1]),
+            ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
+                                      // "💩++" will fail, because TODO we need to strip
+                                      // non-alphanumeric from the start, else the words splitter
+                                      // won't work
         ];
 
         for case in cases {

@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 nom = "7"
+nom-unicode = "0.3"
 #irc = { version = "0.15", features=["tls-rust"] }
 irc = { version = "0.15" }
 futures = "0.3"
