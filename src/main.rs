@@ -1,3 +1,8 @@
+/* TODO
+ * - prom exporter for karma trends over time
+ * - proper logging lib; tracing[-subscriber]
+ */
+
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
