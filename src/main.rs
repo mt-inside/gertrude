@@ -1,17 +1,16 @@
 use nom::{
-    bytes::complete::tag,
-    bytes::complete::{is_a, is_not},
+    bytes::complete::{is_a, is_not, tag},
     character::complete::alpha1,
     combinator::opt,
-    multi::fold_many1,
+    multi::fold_many0,
     sequence::terminated,
     IResult,
 };
 use std::collections::HashMap;
 
 fn parse_many(i: &str) -> IResult<&str, HashMap<&str, i32>> {
-    let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstuvwxyz+-";
-    let words = terminated(is_a(letters), opt(is_not(letters)));
+    let token_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
+    let words = terminated(is_a(token_chars), opt(is_not(token_chars)));
     let mut upvote = opt(terminated(
         alpha1::<&str, nom::error::Error<&str>>,
         tag("++"),
@@ -20,27 +19,29 @@ fn parse_many(i: &str) -> IResult<&str, HashMap<&str, i32>> {
         alpha1::<&str, nom::error::Error<&str>>,
         tag("--"),
     ));
-    fold_many1(words, HashMap::new, move |mut acc: HashMap<_, _>, item| {
+    let mut parser = fold_many0(words, HashMap::new, move |mut m: HashMap<_, _>, item| {
         if let Ok((_, Some(term))) = upvote(item) {
-            let count = acc.entry(term).or_insert(0);
+            let count = m.entry(term).or_insert(0);
             *count += 1;
         } else if let Ok((_, Some(term))) = downvote(item) {
-            let count = acc.entry(term).or_insert(0);
+            let count = m.entry(term).or_insert(0);
             *count -= 1;
         }
-        acc
-    })(i)
+        m
+    });
+    parser(i)
 }
 
 fn main() {
-    println!("{:?}", parse_many("bacon++"));
-    println!("{:?}", parse_many("bacon++. Oh dear emacs crashed"));
-    println!(
-        "{:?}",
-        parse_many("Drivel about LISP. bacon++. Oh dear emacs crashed")
-    );
-    println!(
-        "{:?}",
-        parse_many("Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.")
-    );
+    go("");
+    go("no votes");
+    go("--");
+    go("bacon++");
+    go("bacon++. Oh dear emacs crashed");
+    go("Drivel about LISP. bacon++. Oh dear emacs crashed");
+    go("Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.");
+}
+
+fn go(s: &str) -> () {
+    println!("{:?}", parse_many(s).unwrap().1);
 }
