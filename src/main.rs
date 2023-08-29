@@ -10,7 +10,7 @@ use nom::{
 };
 use std::collections::HashMap;
 
-fn parse_many(i: &str) -> IResult<&str, HashMap<String, i32>> {
+fn parse_many<'a, 'b>(i: &'a str, karma: &'b mut HashMap<String, i32>) -> IResult<&'a str, ()> {
     let token_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+-";
     let words = terminated(is_a(token_chars), opt(is_not(token_chars)));
     let mut upvote = opt(terminated(
@@ -21,16 +21,20 @@ fn parse_many(i: &str) -> IResult<&str, HashMap<String, i32>> {
         alpha1::<&str, nom::error::Error<&str>>,
         tag("--"),
     ));
-    let mut parser = fold_many0(words, HashMap::new, |mut m, item| {
-        if let Ok((_, Some(term))) = upvote(item) {
-            let count = m.entry(term.to_owned()).or_insert(0);
-            *count += 1;
-        } else if let Ok((_, Some(term))) = downvote(item) {
-            let count = m.entry(term.to_owned()).or_insert(0);
-            *count -= 1;
-        }
-        m
-    });
+    let mut parser = fold_many0(
+        words,
+        || (),
+        |(), item| {
+            if let Ok((_, Some(term))) = upvote(item) {
+                let count = karma.entry(term.to_owned()).or_insert(0);
+                *count += 1;
+            } else if let Ok((_, Some(term))) = downvote(item) {
+                let count = karma.entry(term.to_owned()).or_insert(0);
+                *count -= 1;
+            }
+            ()
+        },
+    );
     parser(i)
 }
 
@@ -64,10 +68,13 @@ async fn go_lurk() -> Result<(), irc::error::Error> {
 
     while let Some(message) = stream.next().await.transpose()? {
         println!("{:?}", message);
-        if let Command::PRIVMSG(_recipient, text) = message.command {
-            let news = parse_many(&text).unwrap().1;
-            println!("{:?}", news);
-            karma.extend(news);
+        if let Command::PRIVMSG(ref recipient, ref text) = message.command {
+            if text.starts_with(client.current_nickname()) {
+                let cur = format!("{:?}", karma);
+                client.send_privmsg(recipient, cur).unwrap();
+            }
+            let res = parse_many(text, &mut karma);
+            println!("{:?}", res);
             println!("{:?}", karma);
         }
     }
@@ -76,6 +83,7 @@ async fn go_lurk() -> Result<(), irc::error::Error> {
 }
 
 fn go(s: &str) -> () {
-    let k = parse_many(s).unwrap();
+    let mut k = HashMap::new();
+    parse_many(s, &mut k).unwrap();
     println!("{:?}", k);
 }
