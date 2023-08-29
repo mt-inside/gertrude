@@ -2,10 +2,10 @@ use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
     bytes::complete::{is_a, is_not, tag},
-    character::complete::alpha1,
+    character::complete::{alpha1, space1},
     combinator::opt,
     multi::fold_many0,
-    sequence::terminated,
+    sequence::{terminated, tuple},
     IResult,
 };
 use std::collections::HashMap;
@@ -77,14 +77,9 @@ async fn go_lurk() -> Result<(), anyhow::Error> {
             if text.starts_with(client.current_nickname())
                 || recipient.eq(client.current_nickname())
             {
-                // TODO: more parsing, have a command syntax for her. Eg "karma foo"
-                // gonna be the thing of try one compiler, then another if it fails (alt?) - or if-let?, and
-                // within them, prefix? value? recognize?
-                // Actually test this parser before you deploy it!
-
-                let cur = format!("{:?}", karma);
+                let resp = get_resp(strip_nick(text, client.current_nickname()), &karma);
                 println!("Sending response to {:?}", message.response_target());
-                client.send_privmsg(message.response_target().unwrap(), cur)?;
+                client.send_privmsg(message.response_target().unwrap(), resp)?;
             } else {
                 // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
                 let res = parse_many(text, &mut karma);
@@ -101,4 +96,37 @@ fn go(s: &str) -> () {
     let mut k = HashMap::new();
     parse_many(s, &mut k).unwrap();
     println!("{:?}", k);
+}
+
+fn get_resp<'a, 'b>(text: &'a str, karma: &'b HashMap<UniCase<String>, i32>) -> String {
+    // TODO: Actually test this parser before you deploy it!
+    let mut p_karma = tuple((
+        tag("karma"),
+        opt(space1::<&str, nom::error::Error<&str>>),
+        opt(alpha1), // TODO: use letters, derive +/- version from orig
+    ));
+    if let Ok((_rest, (_, _, arg))) = p_karma(text) {
+        match arg {
+            None => {
+                println!("karma all");
+                format!("{:?}", karma)
+            }
+            Some(token) => {
+                println!("karma {}", token);
+                format!(
+                    "{}",
+                    karma.get(&UniCase::new(token.to_owned())).unwrap_or(&0)
+                )
+            }
+        }
+    } else {
+        "unknown command / args".to_owned()
+    }
+}
+
+fn strip_nick<'a, 'b>(s: &'a str, nick: &'b str) -> &'a str {
+    match s.strip_prefix(nick) {
+        Some(msg) => msg.trim_start_matches([':', '>']).trim_start(),
+        None => s,
+    }
 }
