@@ -1,6 +1,5 @@
 /* TODO
  * - prom exporter for karma trends over time
- * - proper logging lib; tracing[-subscriber]
  * - admin command should be out-of-band: grpc interface I can hit (leave grpcurl scripts over loopback in repo)
  */
 
@@ -21,6 +20,8 @@ use nom_unicode::{
 use std::collections::HashMap;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{SubsystemHandle, Toplevel};
+use tracing::*;
+use tracing_subscriber::{filter, prelude::*};
 use unicase::UniCase;
 
 #[derive(Parser, Clone, Debug)]
@@ -40,6 +41,16 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
+
+    // Recall: foo=>tracing::Value; %foo=>fmt::Display; ?foo=>fmt::Debug
+    tracing_subscriber::registry()
+        .with(
+            filter::Targets::new()
+                .with_default(Level::INFO)
+                .with_target("gertrude", Level::TRACE),
+        )
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .init();
 
     let bot = Chatbot::new(args.clone());
     Toplevel::new()
@@ -87,23 +98,23 @@ impl Chatbot {
         loop {
             tokio::select! {
                 Some(Ok(message)) = stream.next() => {
-                    println!("Message: {:?}", message);
+                    info!(?message, "received");
                     let nick = client.current_nickname();
                     if let Command::PRIVMSG(ref recipient, ref text) = message.command {
                         if let Some(msg) = get_dm(nick, recipient, text) {
                             let resp = get_resp(msg, &mut karma);
-                            println!("Sending response to {:?}", message.response_target());
+                            debug!(target = message.response_target(), "Sending response");
                             client.send_privmsg(message.response_target().unwrap(), resp)?;
                         } else {
                             // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
                             let res = parse_many(text, &mut karma);
-                            println!("Token parsing result: {:?}", res);
-                            println!("Karma now: {:?}", karma);
+                            debug!(?res, "Token parsing complete");
+                            info!(?karma, "Karma");
                         }
                     }
                 },
                 _ = subsys.on_shutdown_requested() => {
-                    println!("Shutting down!");
+                    info!("Shutting down!");
                     client.send_privmsg(self.args.channel, "Killed!")?;
                     break
                 },
@@ -164,11 +175,11 @@ fn get_resp(text: &str, karma: &mut HashMap<UniCase<String>, i32>) -> String {
     if let Ok((_rest, (_, _, arg))) = p_karma(text) {
         match arg {
             None => {
-                println!("Command: karma all");
+                info!("Command: karma all");
                 format!("{:?}", karma)
             }
             Some(token) => {
-                println!("Command: karma {}", token);
+                info!(token, "Command: karma");
                 format!(
                     "{}",
                     karma.get(&UniCase::new(token.to_owned())).unwrap_or(&0)
@@ -181,7 +192,7 @@ fn get_resp(text: &str, karma: &mut HashMap<UniCase<String>, i32>) -> String {
         if sign == Some("-") {
             *count *= -1;
         }
-        println!("Command: mattisskill {} = {}", token, count);
+        info!(token, count, "Command: mattisskill");
         format!("{} now {}", token, count)
     } else {
         "unknown command / args".to_owned()
@@ -200,7 +211,7 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
         take_till1(is_alphanumeric),
     ));
 
-    println!("Is it a DM? {:?}", p_dm(s));
+    debug!(parse_result = ?p_dm(s), "Is it a DM?");
 
     if target.eq(nick) {
         Some(s)
