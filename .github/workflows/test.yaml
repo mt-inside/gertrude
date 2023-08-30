@@ -28,3 +28,6 @@ jobs:
 
       - name: Lint & Test
         run: just test
+
+      - name: Coveralls Upload
+        uses: coverallsapp/github-action@v2

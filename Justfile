@@ -14,7 +14,7 @@ MELANGE := "melange"
 APKO    := "apko"
 
 tools-install:
-	cargo install cargo-llvm-cov
+	cargo install llvm-tools-preview
 
 lint:
 	cargo fmt --all
@@ -22,7 +22,16 @@ lint:
 	cargo clippy -- -D warnings
 
 test: lint
-	cargo llvm-cov --all
+	#!/bin/bash
+	export RUSTFLAGS="-Cinstrument-coverage"
+	export LLVM_PROFILE_FILE="gertrude-%p-%m.profraw"
+	cargo test --all
+	# Convert the profraw files into lcov
+	grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing -o ./target/debug/coverage/
+
+coverage-view: test
+	grcov . -s . --binary-path ./target/debug/ -t html --branch --ignore-not-existing -o ./target/debug/coverage/
+	open ./target/debug/coverage/index.html
 
 build-ci:
 	cargo build --release
