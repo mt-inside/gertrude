@@ -29,11 +29,11 @@ test: lint
 	cargo test --all
 	# Convert the profraw files into lcov
 	mkdir -p target/debug/coverage
-	grcov . -s . --binary-path target/debug/ -t lcov --branch --ignore-not-existing -o target/debug/coverage/
+	grcov . -s . --binary-path target/debug/ -t lcov --branch --ignore-not-existing --keep-only 'src/*' -o target/debug/coverage/
 
 coverage-view: test
 	mkdir -p target/debug/coverage
-	grcov . -s . --binary-path target/debug/ -t html --branch --ignore-not-existing -o target/debug/coverage/
+	grcov . -s . --binary-path target/debug/ -t html --branch --ignore-not-existing --keep-only 'src/*' -o target/debug/coverage/
 	open target/debug/coverage/html/index.html
 
 build-ci:

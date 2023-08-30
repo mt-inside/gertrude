@@ -29,8 +29,10 @@ jobs:
       - name: Lint & Test
         run: just test
 
+      # For this to work, the repo needs setting up on Coveralls.io
       - name: Coveralls Upload
         uses: coverallsapp/github-action@v2
         with:
           file: target/debug/coverage/lcov
           format: lcov
+          # Doesn't need a coveralls API key, cause it uses the ambient GH key to auth that way (coveralls is installed as a GH oauth app)
