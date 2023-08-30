@@ -3,6 +3,7 @@
  * - proper logging lib; tracing[-subscriber]
  */
 
+use clap::Parser;
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
@@ -17,7 +18,93 @@ use nom_unicode::{
     is_alphanumeric,
 };
 use std::collections::HashMap;
+use tokio::time::Duration;
+use tokio_graceful_shutdown::{SubsystemHandle, Toplevel};
 use unicase::UniCase;
+
+#[derive(Parser, Clone, Debug)]
+#[command(name = env!("CARGO_BIN_NAME"))]
+#[command(author = "Matt Turner")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(about = "botten gertrude", long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    server: String,
+    #[arg(short, long)]
+    channel: String,
+    #[arg(short, long, default_value_t = env!("CARGO_BIN_NAME").to_owned())]
+    nick: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
+    let args = Args::parse();
+
+    let bot = Chatbot::new(args.clone());
+    Toplevel::new()
+        .start("chatbot", move |subsys: SubsystemHandle| bot.lurk(subsys))
+        .catch_signals()
+        .handle_shutdown_requests(Duration::from_millis(1000))
+        .await
+        .map_err(Into::into)
+}
+
+struct Chatbot {
+    args: Args,
+}
+
+impl Chatbot {
+    fn new(args: Args) -> Self {
+        Self { args }
+    }
+
+    async fn lurk(self, _subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
+        let config = Config {
+            nickname: Some(self.args.nick.clone()),
+            server: Some(self.args.server.clone()),
+            channels: vec![self.args.channel.clone()],
+            version: Some(format!(
+                "{} {} {}/{}",
+                env!("CARGO_BIN_NAME"),
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            )),
+            source: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
+            user_info: Some(format!(
+                "Jag känner en bot, hon heter {0}, {0} heter hon",
+                env!("CARGO_PKG_NAME")
+            )),
+            ..Default::default()
+        };
+        let mut client = Client::from_config(config).await?;
+        client.identify()?;
+
+        let mut karma = HashMap::new();
+        let mut stream = client.stream()?;
+
+        // TODO: tokio::select! from both this stream and subsys.on_shutdown_requested()
+        // TODO: try to get out a nice death message when that happens
+        while let Some(message) = stream.next().await.transpose()? {
+            println!("Message: {:?}", message);
+            let nick = client.current_nickname();
+            if let Command::PRIVMSG(ref recipient, ref text) = message.command {
+                if let Some(msg) = get_dm(nick, recipient, text) {
+                    let resp = get_resp(msg, &karma);
+                    println!("Sending response to {:?}", message.response_target());
+                    client.send_privmsg(message.response_target().unwrap(), resp)?;
+                } else {
+                    // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
+                    let res = parse_many(text, &mut karma);
+                    println!("Token parsing result: {:?}", res);
+                    println!("Karma now: {:?}", karma);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
 
 fn is_alnumvote(c: char) -> bool {
     is_alphanumeric(c) || c == '+' || c == '-'
@@ -47,58 +134,6 @@ fn parse_many<'a>(i: &'a str, karma: &mut HashMap<UniCase<String>, i32>) -> IRes
         },
     );
     parser(i)
-}
-
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
-    go_lurk().await?;
-
-    Ok(())
-}
-
-async fn go_lurk() -> Result<(), anyhow::Error> {
-    let config = Config {
-        nickname: Some("gertrude".to_owned()),
-        server: Some("irc.z.je".to_owned()),
-        channels: vec!["#ant.org".to_owned()],
-        version: Some(format!(
-            "{} {} {}/{}",
-            env!("CARGO_BIN_NAME"),
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::OS,
-            std::env::consts::ARCH,
-        )),
-        source: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
-        user_info: Some(format!(
-            "Jag känner en bot, hon heter {0}, {0} heter hon",
-            env!("CARGO_PKG_NAME")
-        )),
-        ..Default::default()
-    };
-    let mut client = Client::from_config(config).await?;
-    client.identify()?;
-
-    let mut karma = HashMap::new();
-    let mut stream = client.stream()?;
-
-    while let Some(message) = stream.next().await.transpose()? {
-        println!("Message: {:?}", message);
-        let nick = client.current_nickname();
-        if let Command::PRIVMSG(ref recipient, ref text) = message.command {
-            if let Some(msg) = get_dm(nick, recipient, text) {
-                let resp = get_resp(msg, &karma);
-                println!("Sending response to {:?}", message.response_target());
-                client.send_privmsg(message.response_target().unwrap(), resp)?;
-            } else {
-                // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                let res = parse_many(text, &mut karma);
-                println!("Token parsing result: {:?}", res);
-                println!("Karma now: {:?}", karma);
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {

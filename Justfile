@@ -31,8 +31,8 @@ package: test
 	{{MELANGE}} keygen
 	{{MELANGE}} build --arch {{CGR_ARCHS}} --signing-key melange.rsa melange.yaml
 
-run: test
-	cargo run
+run *ARGS: test
+	cargo run -- {{ARGS}}
 
 image-local:
 	{{APKO}} build --keyring-append melange.rsa.pub --arch {{CGR_ARCHS}} apko.yaml {{GH_REPO}}:{{TAG}} gertrude.tar
