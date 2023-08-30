@@ -28,11 +28,13 @@ test: lint
 	export LLVM_PROFILE_FILE="gertrude-%p-%m.profraw"
 	cargo test --all
 	# Convert the profraw files into lcov
-	grcov . -s . --binary-path ./target/debug/ -t lcov --branch --ignore-not-existing -o ./target/debug/coverage/
+	mkdir -p target/debug/coverage
+	grcov . -s . --binary-path target/debug/ -t lcov --branch --ignore-not-existing -o target/debug/coverage/
 
 coverage-view: test
-	grcov . -s . --binary-path ./target/debug/ -t html --branch --ignore-not-existing -o ./target/debug/coverage/
-	open ./target/debug/coverage/index.html
+	mkdir -p target/debug/coverage
+	grcov . -s . --binary-path target/debug/ -t html --branch --ignore-not-existing -o target/debug/coverage/
+	open target/debug/coverage/html/index.html
 
 build-ci:
 	cargo build --release
