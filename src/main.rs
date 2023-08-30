@@ -1,6 +1,7 @@
 /* TODO
  * - prom exporter for karma trends over time
  * - proper logging lib; tracing[-subscriber]
+ * - admin command should be out-of-band: grpc interface I can hit (leave grpcurl scripts over loopback in repo)
  */
 
 use clap::Parser;
@@ -14,7 +15,7 @@ use nom::{
     IResult,
 };
 use nom_unicode::{
-    complete::{alphanumeric1, space1},
+    complete::{alphanumeric1, digit1, space1},
     is_alphanumeric,
 };
 use std::collections::HashMap;
@@ -90,7 +91,7 @@ impl Chatbot {
                     let nick = client.current_nickname();
                     if let Command::PRIVMSG(ref recipient, ref text) = message.command {
                         if let Some(msg) = get_dm(nick, recipient, text) {
-                            let resp = get_resp(msg, &karma);
+                            let resp = get_resp(msg, &mut karma);
                             println!("Sending response to {:?}", message.response_target());
                             client.send_privmsg(message.response_target().unwrap(), resp)?;
                         } else {
@@ -143,12 +144,23 @@ fn parse_many<'a>(i: &'a str, karma: &mut HashMap<UniCase<String>, i32>) -> IRes
     parser(i)
 }
 
-fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {
+fn get_resp(text: &str, karma: &mut HashMap<UniCase<String>, i32>) -> String {
     let mut p_karma = tuple((
         tag("karma"),
         opt(space1::<&str, nom::error::Error<&str>>),
         opt(alphanumeric1),
     ));
+    let mut p_admin = tuple((
+        tag("mattisskill"),
+        space1::<&str, nom::error::Error<&str>>,
+        tag("set"),
+        space1::<&str, nom::error::Error<&str>>,
+        alphanumeric1,
+        space1::<&str, nom::error::Error<&str>>,
+        opt(tag("-")),
+        digit1,
+    ));
+
     if let Ok((_rest, (_, _, arg))) = p_karma(text) {
         match arg {
             None => {
@@ -163,6 +175,14 @@ fn get_resp(text: &str, karma: &HashMap<UniCase<String>, i32>) -> String {
                 )
             }
         }
+    } else if let Ok((_rest, (_, _, _, _, token, _, sign, val))) = p_admin(text) {
+        let count = karma.entry(UniCase::new(token.to_owned())).or_insert(0);
+        *count = val.parse::<i32>().unwrap();
+        if sign == Some("-") {
+            *count *= -1;
+        }
+        println!("Command: mattisskill {} = {}", token, count);
+        format!("{} now {}", token, count)
     } else {
         "unknown command / args".to_owned()
     }
@@ -231,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_resp() {
+    fn test_get_resp_karma() {
         let k = fix_map_types(hashmap![
             "bacon" => 1,
             "blɸwback" => -1,
@@ -248,7 +268,45 @@ mod tests {
         ];
 
         for case in cases {
-            assert_eq!(get_resp(case.0, &k.clone()), case.1);
+            assert_eq!(get_resp(case.0, &mut k.clone()), case.1);
+        }
+    }
+
+    #[test]
+    fn test_get_resp_admin() {
+        let k = fix_map_types(hashmap![
+            "bacon" => 1,
+            "blɸwback" => -1,
+            "rust" => 666,
+            "LISP" => -666,
+        ]);
+        let cases = [
+            (
+                "mattisskill set rust 612",
+                "rust now 612",
+                hashmap!["rust" => 612],
+            ),
+            (
+                "mattisskill set new 42",
+                "new now 42",
+                hashmap!["new" => 42],
+            ),
+            (
+                "mattisskill set newer -42",
+                "newer now -42",
+                hashmap!["newer" => -42],
+            ),
+        ];
+
+        for case in cases {
+            let mut act_k = HashMap::new();
+            act_k.extend(k.clone());
+            assert_eq!(get_resp(case.0, &mut act_k), case.1);
+
+            let mut exp_k = HashMap::new();
+            exp_k.extend(k.clone());
+            exp_k.extend(fix_map_types(case.2));
+            assert_eq!(act_k, exp_k);
         }
     }
 
