@@ -17,10 +17,12 @@ tools-install:
 	cargo install cargo-llvm-cov
 
 lint:
-	cargo clippy
+	cargo fmt --all
+	cargo check
+	cargo clippy -- -D warnings
 
 test: lint
-	cargo llvm-cov
+	cargo llvm-cov --all
 
 build-ci:
 	cargo build --release
