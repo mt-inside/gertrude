@@ -15,6 +15,7 @@ APKO    := "apko"
 
 tools-install:
 	rustup component add llvm-tools-preview
+	cargo install grcov
 
 lint:
 	cargo fmt --all
