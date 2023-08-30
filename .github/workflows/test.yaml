@@ -1,0 +1,30 @@
+name: test
+
+on: push
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install Just
+        uses: extractions/setup-just@v1
+
+      - name: Install tools
+        run: just tools-install
+
+      - name: Find tools
+        run: echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Lint & Test
+        run: just test
