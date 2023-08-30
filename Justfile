@@ -14,7 +14,7 @@ MELANGE := "melange"
 APKO    := "apko"
 
 tools-install:
-	cargo install llvm-tools-preview
+	rustup component add llvm-tools-preview
 
 lint:
 	cargo fmt --all
