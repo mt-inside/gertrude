@@ -44,7 +44,7 @@ async fn main() -> Result<(), anyhow::Error> {
     Toplevel::new()
         .start("chatbot", move |subsys: SubsystemHandle| bot.lurk(subsys))
         .catch_signals()
-        .handle_shutdown_requests(Duration::from_millis(1000))
+        .handle_shutdown_requests(Duration::from_millis(5000))
         .await
         .map_err(Into::into)
 }
@@ -58,7 +58,7 @@ impl Chatbot {
         Self { args }
     }
 
-    async fn lurk(self, _subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
+    async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
         let config = Config {
             nickname: Some(self.args.nick.clone()),
             server: Some(self.args.server.clone()),
@@ -83,23 +83,30 @@ impl Chatbot {
         let mut karma = HashMap::new();
         let mut stream = client.stream()?;
 
-        // TODO: tokio::select! from both this stream and subsys.on_shutdown_requested()
-        // TODO: try to get out a nice death message when that happens
-        while let Some(message) = stream.next().await.transpose()? {
-            println!("Message: {:?}", message);
-            let nick = client.current_nickname();
-            if let Command::PRIVMSG(ref recipient, ref text) = message.command {
-                if let Some(msg) = get_dm(nick, recipient, text) {
-                    let resp = get_resp(msg, &karma);
-                    println!("Sending response to {:?}", message.response_target());
-                    client.send_privmsg(message.response_target().unwrap(), resp)?;
-                } else {
-                    // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                    let res = parse_many(text, &mut karma);
-                    println!("Token parsing result: {:?}", res);
-                    println!("Karma now: {:?}", karma);
-                }
-            }
+        loop {
+            tokio::select! {
+                Some(Ok(message)) = stream.next() => {
+                    println!("Message: {:?}", message);
+                    let nick = client.current_nickname();
+                    if let Command::PRIVMSG(ref recipient, ref text) = message.command {
+                        if let Some(msg) = get_dm(nick, recipient, text) {
+                            let resp = get_resp(msg, &karma);
+                            println!("Sending response to {:?}", message.response_target());
+                            client.send_privmsg(message.response_target().unwrap(), resp)?;
+                        } else {
+                            // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
+                            let res = parse_many(text, &mut karma);
+                            println!("Token parsing result: {:?}", res);
+                            println!("Karma now: {:?}", karma);
+                        }
+                    }
+                },
+                _ = subsys.on_shutdown_requested() => {
+                    println!("Shutting down!");
+                    client.send_privmsg(self.args.channel, "Killed!")?;
+                    break
+                },
+            };
         }
 
         Ok(())
