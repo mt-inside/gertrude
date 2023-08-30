@@ -57,19 +57,16 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn go_lurk() -> Result<(), anyhow::Error> {
-    let rustc_ver = rustc_version::version_meta().unwrap();
     let config = Config {
         nickname: Some("gertrude".to_owned()),
         server: Some("irc.z.je".to_owned()),
         channels: vec!["#ant.org".to_owned()],
         version: Some(format!(
-            "{} {} {}/{} (rust {} {})",
-            env!("CARGO_PKG_NAME"),
+            "{} {} {}/{}",
+            env!("CARGO_BIN_NAME"),
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
             std::env::consts::ARCH,
-            rustc_ver.semver,
-            rustc_ver.host,
         )),
         source: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
         user_info: Some(format!(
