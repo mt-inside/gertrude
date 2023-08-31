@@ -8,6 +8,7 @@ repository = "http://github.com/mt-inside/gertrude"
 
 [dependencies]
 anyhow = "1"
+thiserror = "1"
 nom = "7"
 nom-unicode = "0.3"
 irc = { version = "0.15", features=["ctcp"] } # "tls-rust"
@@ -19,6 +20,9 @@ maplit = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+prometheus = "0.13"
+actix-web = "4.4"
+miette = { version = "5.10", features = ["fancy"] }
 
 [profile.release]
 strip = true

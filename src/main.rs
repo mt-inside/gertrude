@@ -1,40 +1,46 @@
 /* TODO
- * - prom exporter for karma trends over time
+ * - prom exporter for pings and pongs - understand these. Want a count and a rate
  * - admin command should be out-of-band: grpc interface I can hit (leave grpcurl scripts over loopback in repo)
  */
+
+mod metrics;
+
+use std::collections::HashMap;
 
 use clap::Parser;
 use futures::prelude::*;
 use irc::client::prelude::*;
+use maplit::hashmap;
 use nom::{
     bytes::complete::{tag, take_till1, take_while1},
     combinator::opt,
     multi::fold_many0,
     sequence::{terminated, tuple},
-    IResult,
 };
 use nom_unicode::{
     complete::{alphanumeric1, digit1, space1},
     is_alphanumeric,
 };
-use std::collections::HashMap;
 use tokio::time::Duration;
 use tokio_graceful_shutdown::{SubsystemHandle, Toplevel};
 use tracing::*;
 use tracing_subscriber::{filter, prelude::*};
 use unicase::UniCase;
 
-#[derive(Parser, Clone, Debug)]
-#[command(name = env!("CARGO_BIN_NAME"))]
+pub static NAME: &str = env!("CARGO_BIN_NAME"); // has hypens; CARGO_CRATE_NAME for underscores
+pub static VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Parser, Clone, Debug, Default)]
+#[command(name = NAME)]
 #[command(author = "Matt Turner")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = VERSION)]
 #[command(about = "botten gertrude", long_about = None)]
 struct Args {
     #[arg(short, long)]
     server: String,
     #[arg(short, long)]
     channel: String,
-    #[arg(short, long, default_value_t = env!("CARGO_BIN_NAME").to_owned())]
+    #[arg(short, long, default_value_t = NAME.to_owned())]
     nick: String,
 }
 
@@ -44,17 +50,17 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Recall: foo=>tracing::Value; %foo=>fmt::Display; ?foo=>fmt::Debug
     tracing_subscriber::registry()
-        .with(
-            filter::Targets::new()
-                .with_default(Level::INFO)
-                .with_target("gertrude", Level::TRACE),
-        )
+        .with(filter::Targets::new().with_default(Level::INFO).with_target("gertrude", Level::TRACE))
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
-    let bot = Chatbot::new(args.clone());
+    let metrics = metrics::Metrics::new();
+
+    // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
+    let bot = Chatbot::new(args.clone(), metrics.clone());
     Toplevel::new()
         .start("chatbot", move |subsys: SubsystemHandle| bot.lurk(subsys))
+        .start("metrics_server", move |subsys: SubsystemHandle| metrics.serve(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await
@@ -63,11 +69,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
 struct Chatbot {
     args: Args,
+    metrics: metrics::Metrics,
 }
 
 impl Chatbot {
-    fn new(args: Args) -> Self {
-        Self { args }
+    fn new(args: Args, metrics: metrics::Metrics) -> Self {
+        Self { args, metrics }
     }
 
     async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
@@ -75,23 +82,15 @@ impl Chatbot {
             nickname: Some(self.args.nick.clone()),
             server: Some(self.args.server.clone()),
             channels: vec![self.args.channel.clone()],
-            version: Some(format!(
-                "{} {} {}/{}",
-                env!("CARGO_BIN_NAME"),
-                env!("CARGO_PKG_VERSION"),
-                std::env::consts::OS,
-                std::env::consts::ARCH,
-            )),
+            version: Some(format!("{} {} {}/{}", NAME, VERSION, std::env::consts::OS, std::env::consts::ARCH,)),
             source: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
-            user_info: Some(format!(
-                "Jag känner en bot, hon heter {0}, {0} heter hon",
-                env!("CARGO_PKG_NAME")
-            )),
+            user_info: Some(format!("Jag känner en bot, hon heter {0}, {0} heter hon", NAME,)),
             ..Default::default()
         };
         let mut client = Client::from_config(config).await?;
         client.identify()?;
 
+        // TODO: need a karma type that wraps the map and updates metrics, logs, when set
         let mut karma = HashMap::new();
         let mut stream = client.stream()?;
 
@@ -99,22 +98,26 @@ impl Chatbot {
             tokio::select! {
                 Some(Ok(message)) = stream.next() => {
                     info!(?message, "received");
-                    let nick = client.current_nickname();
                     if let Command::PRIVMSG(ref recipient, ref text) = message.command {
-                        if let Some(msg) = get_dm(nick, recipient, text) {
-                            let resp = get_resp(msg, &mut karma);
+                        let nick = client.current_nickname();
+                        if let Some(dm) = get_dm(nick, recipient, text) {
+                            let (deltas, resp) = parse_dm(dm, &karma);
+                            karma.extend(deltas);
                             debug!(target = message.response_target(), "Sending response");
                             client.send_privmsg(message.response_target().unwrap(), resp)?;
                         } else {
                             // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                            let res = parse_many(text, &mut karma);
-                            debug!(?res, "Token parsing complete");
-                            info!(?karma, "Karma");
+                            let deltas = parse_chat(text, &karma);
+                            karma.extend(deltas);
                         }
+                    }
+                    info!(?karma, "Karma");
+                    for (k,v) in &karma {
+                        self.metrics.karma.with_label_values(&[k.as_str()]).set(*v as f64);
                     }
                 },
                 _ = subsys.on_shutdown_requested() => {
-                    info!("Shutting down!");
+                    info!("Bot task got shutdown request");
                     client.send_privmsg(self.args.channel, "Killed!")?;
                     break
                 },
@@ -125,42 +128,30 @@ impl Chatbot {
     }
 }
 
-fn is_alnumvote(c: char) -> bool {
-    is_alphanumeric(c) || c == '+' || c == '-'
+fn parse_chat(text: &str, karma: &HashMap<UniCase<String>, i32>) -> HashMap<UniCase<String>, i32> {
+    let words = terminated(take_while1(is_alnumvote), opt::<&str, &str, nom::error::Error<&str>, _>(take_till1(is_alphanumeric))); // opt(not(alphanumeric1)) doesn't work
+    let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
+    let mut downvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("--")));
+    let mut parser = fold_many0(words, HashMap::new, |mut new_karma, item| {
+        if let Ok((_, Some(term))) = upvote(item) {
+            let old_count = karma.get(&UniCase::new(term.to_owned())).unwrap_or(&0);
+            let new_count = new_karma.entry(UniCase::new(term.to_owned())).or_insert(*old_count);
+            *new_count += 1;
+        } else if let Ok((_, Some(term))) = downvote(item) {
+            let old_count = karma.get(&UniCase::new(term.to_owned())).unwrap_or(&0);
+            let new_count = new_karma.entry(UniCase::new(term.to_owned())).or_insert(*old_count);
+            *new_count -= 1;
+        }
+        new_karma
+    });
+    let res = parser(text);
+    debug!(?res, "Chat line parsing complete");
+
+    res.unwrap().1
 }
 
-fn parse_many<'a>(i: &'a str, karma: &mut HashMap<UniCase<String>, i32>) -> IResult<&'a str, ()> {
-    let words = terminated(take_while1(is_alnumvote), opt(take_till1(is_alphanumeric))); // opt(not(alphanumeric1)) doesn't work
-    let mut upvote = opt(terminated(
-        alphanumeric1::<&str, nom::error::Error<&str>>,
-        tag("++"),
-    ));
-    let mut downvote = opt(terminated(
-        alphanumeric1::<&str, nom::error::Error<&str>>,
-        tag("--"),
-    ));
-    let mut parser = fold_many0(
-        words,
-        || (),
-        |(), item| {
-            if let Ok((_, Some(term))) = upvote(item) {
-                let count = karma.entry(UniCase::new(term.to_owned())).or_insert(0);
-                *count += 1;
-            } else if let Ok((_, Some(term))) = downvote(item) {
-                let count = karma.entry(UniCase::new(term.to_owned())).or_insert(0);
-                *count -= 1;
-            }
-        },
-    );
-    parser(i)
-}
-
-fn get_resp(text: &str, karma: &mut HashMap<UniCase<String>, i32>) -> String {
-    let mut p_karma = tuple((
-        tag("karma"),
-        opt(space1::<&str, nom::error::Error<&str>>),
-        opt(alphanumeric1),
-    ));
+fn parse_dm(text: &str, karma: &HashMap<UniCase<String>, i32>) -> (HashMap<UniCase<String>, i32>, String) {
+    let mut p_karma = tuple((tag("karma"), opt(space1::<&str, nom::error::Error<&str>>), opt(alphanumeric1)));
     let mut p_admin = tuple((
         tag("mattisskill"),
         space1::<&str, nom::error::Error<&str>>,
@@ -176,27 +167,24 @@ fn get_resp(text: &str, karma: &mut HashMap<UniCase<String>, i32>) -> String {
         match arg {
             None => {
                 info!("Command: karma all");
-                format!("{:?}", karma)
+                (hashmap![], format!("{:?}", karma))
             }
             Some(token) => {
                 info!(token, "Command: karma");
-                format!(
-                    "{}",
-                    karma.get(&UniCase::new(token.to_owned())).unwrap_or(&0)
-                )
+                (hashmap![], format!("{}", karma.get(&UniCase::new(token.to_owned())).unwrap_or(&0)))
             }
         }
     } else if let Ok((_rest, (_, _, _, _, token, _, sign, val))) = p_admin(text) {
-        let count = karma.entry(UniCase::new(token.to_owned())).or_insert(0);
-        *count = val.parse::<i32>().unwrap();
-        if sign == Some("-") {
-            *count *= -1;
-        }
-        info!(token, count, "Command: mattisskill");
-        format!("{} now {}", token, count)
+        let new_count = val.parse::<i32>().unwrap() * if sign == Some("-") { -1 } else { 1 };
+        info!(token, new_count, "Command: mattisskill");
+        (hashmap![UniCase::new(token.to_owned()) => new_count], format!("{} now {}", token, new_count))
     } else {
-        "unknown command / args".to_owned()
+        (hashmap![], "unknown command / args".to_owned())
     }
+}
+
+fn is_alnumvote(c: char) -> bool {
+    is_alphanumeric(c) || c == '+' || c == '-'
 }
 
 // fn strip_nick<'a, 'b>(s: &'a str, nick: &'b str) -> &'a str {
@@ -206,10 +194,7 @@ fn get_resp(text: &str, karma: &mut HashMap<UniCase<String>, i32>) -> String {
 //     }
 // }
 fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
-    let mut p_dm = tuple((
-        tag::<&str, &str, nom::error::Error<&str>>(nick),
-        take_till1(is_alphanumeric),
-    ));
+    let mut p_dm = tuple((tag::<&str, &str, nom::error::Error<&str>>(nick), take_till1(is_alphanumeric)));
 
     debug!(parse_result = ?p_dm(s), "Is it a DM?");
 
@@ -224,21 +209,20 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use maplit::hashmap;
     use std::collections::HashMap;
+
+    use maplit::hashmap;
+
+    use super::*;
 
     fn fix_map_types(m: HashMap<&str, i32>) -> HashMap<UniCase<String>, i32> {
         let mut exp = HashMap::new();
-        exp.extend(
-            m.into_iter()
-                .map(move |(k, v)| (UniCase::new(k.to_owned()), v)),
-        );
+        exp.extend(m.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)));
         exp
     }
 
     #[test]
-    fn test_parse_many() {
+    fn test_parse_chat() {
         let cases = [
             ("", hashmap![]),
             ("no votes", hashmap![]),
@@ -246,7 +230,10 @@ mod tests {
             ("bacon++", hashmap!["bacon"=> 1]),
             ("bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
             ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
-            ("Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.", hashmap!["bacon"=>2, "mt" => 1, "bb" =>-1]),
+            (
+                "Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
+                hashmap!["bacon"=>2, "mt" => 1, "bb" =>-1],
+            ),
             ("blɸwback++", hashmap!["blɸwback"=> 1]),
             ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
                                       // "💩++" will fail, because TODO we need to strip
@@ -255,14 +242,13 @@ mod tests {
         ];
 
         for case in cases {
-            let mut k = HashMap::new();
-            assert_eq!(parse_many(case.0, &mut k), Ok(("", ())));
-            assert_eq!(k, fix_map_types(case.1));
+            let k = HashMap::new();
+            assert_eq!(parse_chat(case.0, &k), fix_map_types(case.1));
         }
     }
 
     #[test]
-    fn test_get_resp_karma() {
+    fn test_parse_dm_karma() {
         let k = fix_map_types(hashmap![
             "bacon" => 1,
             "blɸwback" => -1,
@@ -279,12 +265,13 @@ mod tests {
         ];
 
         for case in cases {
-            assert_eq!(get_resp(case.0, &mut k.clone()), case.1);
+            let (_deltas, resp) = parse_dm(case.0, &k);
+            assert_eq!(resp, case.1);
         }
     }
 
     #[test]
-    fn test_get_resp_admin() {
+    fn test_parse_dm_admin() {
         let k = fix_map_types(hashmap![
             "bacon" => 1,
             "blɸwback" => -1,
@@ -292,32 +279,15 @@ mod tests {
             "LISP" => -666,
         ]);
         let cases = [
-            (
-                "mattisskill set rust 612",
-                "rust now 612",
-                hashmap!["rust" => 612],
-            ),
-            (
-                "mattisskill set new 42",
-                "new now 42",
-                hashmap!["new" => 42],
-            ),
-            (
-                "mattisskill set newer -42",
-                "newer now -42",
-                hashmap!["newer" => -42],
-            ),
+            ("mattisskill set rust 612", "rust now 612", hashmap!["rust" => 612]),
+            ("mattisskill set new 42", "new now 42", hashmap!["new" => 42]),
+            ("mattisskill set newer -42", "newer now -42", hashmap!["newer" => -42]),
         ];
 
         for case in cases {
-            let mut act_k = HashMap::new();
-            act_k.extend(k.clone());
-            assert_eq!(get_resp(case.0, &mut act_k), case.1);
-
-            let mut exp_k = HashMap::new();
-            exp_k.extend(k.clone());
-            exp_k.extend(fix_map_types(case.2));
-            assert_eq!(act_k, exp_k);
+            let (deltas, resp) = parse_dm(case.0, &k);
+            assert_eq!(resp, case.1);
+            assert_eq!(deltas, fix_map_types(case.2));
         }
     }
 
@@ -330,12 +300,7 @@ mod tests {
             ("gertie", "#chan", "gertie> foo bar", Some("foo bar")),
             ("gertie", "#chan", "gertie, foo bar", Some("foo bar")),
             ("gertie", "gertie", "foo bar", Some("foo bar")),
-            (
-                "gertie",
-                "gertie",
-                "gertie, foo bar",
-                Some("gertie, foo bar"),
-            ),
+            ("gertie", "gertie", "gertie, foo bar", Some("gertie, foo bar")),
         ];
 
         for case in cases {
