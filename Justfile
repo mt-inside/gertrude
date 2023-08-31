@@ -36,6 +36,9 @@ coverage-view: test
 	grcov . -s . --binary-path target/debug/ -t html --branch --ignore-not-existing --keep-only 'src/*' -o target/debug/coverage/
 	open target/debug/coverage/html/index.html
 
+build:
+	cargo build
+
 build-ci:
 	cargo build --release
 
