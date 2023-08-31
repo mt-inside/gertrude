@@ -27,7 +27,7 @@ impl Metrics {
         HttpServer::new(move || {
             App::new()
                 .app_data(Data::new(r.clone()))
-                .wrap(middleware::Logger::default().exclude("/health"))
+                .wrap(middleware::Logger::default().exclude("/healthz"))
                 .service(health)
                 .service(metrics)
         })
