@@ -1,6 +1,6 @@
 use actix_web::{dev::Server, get, middleware, web::Data, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use maplit::hashmap;
-use prometheus::{register_gauge_vec_with_registry, Encoder, GaugeVec, Registry, TextEncoder};
+use prometheus::{register_counter_vec_with_registry, register_gauge_vec_with_registry, CounterVec, Encoder, GaugeVec, Registry, TextEncoder};
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
 
@@ -8,13 +8,17 @@ use tracing::*;
 pub struct Metrics {
     reg: Registry,
     pub karma: GaugeVec,
+    pub pings: CounterVec,
+    pub pongs: CounterVec,
 }
 
 impl Metrics {
     pub fn new() -> Self {
         let reg = Registry::new();
         let karma = register_gauge_vec_with_registry!("karma", "vox populi", &["term"], reg).unwrap();
-        Metrics { reg, karma }
+        let pings = register_counter_vec_with_registry!("pings", "from server", &["server"], reg).unwrap();
+        let pongs = register_counter_vec_with_registry!("pongs", "to server", &["server"], reg).unwrap();
+        Metrics { reg, karma, pings, pongs }
     }
 
     fn server(self) -> Server {

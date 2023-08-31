@@ -110,6 +110,10 @@ impl Chatbot {
                             let deltas = parse_chat(text, &karma);
                             karma.extend(deltas);
                         }
+                    } else if let Command::PING(ref srv1, ref _srv2) = message.command {
+                        self.metrics.pings.with_label_values(&[srv1]).inc();
+                    } else if let Command::PONG(ref srv1, ref _srv2) = message.command {
+                        self.metrics.pongs.with_label_values(&[srv1]).inc();
                     }
                     info!(?karma, "Karma");
                     for (k,v) in &karma {
