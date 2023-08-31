@@ -20,9 +20,20 @@ impl Metrics {
         let pongs = register_counter_vec_with_registry!("pongs", "to server", &["server"], reg).unwrap();
         Metrics { reg, karma, pings, pongs }
     }
+}
+
+pub struct HTTPSrv {
+    addr: String,
+    m: Metrics,
+}
+
+impl HTTPSrv {
+    pub fn new(addr: String, m: Metrics) -> Self {
+        Self { addr, m }
+    }
 
     fn server(self) -> Server {
-        let r = self.reg.clone();
+        let r = self.m.reg.clone();
 
         HttpServer::new(move || {
             App::new()
@@ -32,8 +43,8 @@ impl Metrics {
                 .service(metrics)
         })
         .disable_signals()
-        .bind("0.0.0.0:8888")
-        .expect("Can't bind to ::8888")
+        .bind(&self.addr)
+        .expect(&format!("Can't bind to {}", self.addr))
         .shutdown_timeout(5)
         .run()
     }

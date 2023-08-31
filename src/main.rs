@@ -1,5 +1,5 @@
 /* TODO
- * - prom exporter for pings and pongs - understand these. Want a count and a rate
+ * - metrics other interesting things like message count/rate, and of which are @gertie and actual dms
  * - admin command should be out-of-band: grpc interface I can hit (leave grpcurl scripts over loopback in repo)
  */
 
@@ -42,6 +42,8 @@ struct Args {
     channel: String,
     #[arg(short, long, default_value_t = NAME.to_owned())]
     nick: String,
+    #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
+    http_addr: String,
 }
 
 #[tokio::main]
@@ -55,12 +57,13 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     let metrics = metrics::Metrics::new();
+    let srv = metrics::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
 
     // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
     let bot = Chatbot::new(args.clone(), metrics.clone());
     Toplevel::new()
         .start("chatbot", move |subsys: SubsystemHandle| bot.lurk(subsys))
-        .start("metrics_server", move |subsys: SubsystemHandle| metrics.serve(subsys))
+        .start("metrics_server", move |subsys: SubsystemHandle| srv.serve(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await
