@@ -5,17 +5,18 @@
 
 mod metrics;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use clap::Parser;
 use futures::prelude::*;
 use irc::client::prelude::*;
-use maplit::hashmap;
+use metrics::Metrics;
 use nom::{
     bytes::complete::{tag, take_till1, take_while1},
     combinator::opt,
     multi::fold_many0,
     sequence::{terminated, tuple},
+    IResult,
 };
 use nom_unicode::{
     complete::{alphanumeric1, digit1, space1},
@@ -57,7 +58,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
-    let metrics = metrics::Metrics::new();
+    let metrics = Metrics::new();
     let srv = metrics::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
     let bot = Chatbot::new(args.clone(), metrics.clone());
 
@@ -70,13 +71,57 @@ async fn main() -> Result<(), anyhow::Error> {
         .map_err(Into::into)
 }
 
+struct Karma {
+    k: HashMap<UniCase<String>, i32>,
+    metrics: Metrics,
+}
+
+impl Karma {
+    fn new(metrics: Metrics) -> Self {
+        Self { k: HashMap::new(), metrics }
+    }
+
+    fn get(&self, term: &str) -> &i32 {
+        self.k.get(&UniCase::new(term.to_owned())).unwrap_or(&0)
+    }
+
+    fn set(&mut self, term: &str, new: i32) {
+        let cur = self.k.entry(UniCase::new(term.to_owned())).or_insert(0);
+        *cur = new;
+
+        self.publish(term, new)
+    }
+
+    fn bias(&mut self, term: &str, diff: i32) -> i32 {
+        let cur = self.k.entry(UniCase::new(term.to_owned())).or_insert(0);
+        *cur += diff;
+        let new = *cur;
+
+        self.publish(term, new);
+
+        new
+    }
+
+    fn publish(&self, term: &str, val: i32) {
+        info!(%self, "Karma");
+
+        self.metrics.karma.with_label_values(&[term]).set(val as f64);
+    }
+}
+
+impl fmt::Display for Karma {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.k)
+    }
+}
+
 struct Chatbot {
     args: Args,
-    metrics: metrics::Metrics,
+    metrics: Metrics,
 }
 
 impl Chatbot {
-    fn new(args: Args, metrics: metrics::Metrics) -> Self {
+    fn new(args: Args, metrics: Metrics) -> Self {
         Self { args, metrics }
     }
 
@@ -94,7 +139,9 @@ impl Chatbot {
         client.identify()?;
 
         // TODO: need a karma type that wraps the map and updates metrics, logs, when set. Can also impl Display, and eg sort output by value
-        let mut karma = HashMap::new();
+        // TODO that type should also persist to disk on updates, and read from disk when constructed.
+        // - just serialize to protos
+        let mut karma = Karma::new(self.metrics.clone());
         let mut stream = client.stream()?;
 
         loop {
@@ -112,23 +159,16 @@ impl Chatbot {
 
                             self.metrics.dms.with_label_values(&[from, to]).inc();
 
-                            let (news, resp) = parse_dm(dm, &karma);
-                            karma.extend(news);
+                            let resp = parse_dm(dm, &mut karma);
 
                             debug!(target = to, "Sending response");
                             client.send_privmsg(to, resp)?;
                         } else {
                             // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                            let news = parse_chat(text, &karma);
-                            karma.extend(news);
+                             let res = parse_chat(text, &mut karma);
+                             debug!(?res, "Chat parsing result");
                         }
 
-                        // TODO: only print if it changed. If we get news here (needed for below), we can just check for non-empty set
-                        info!(?karma, "Karma");
-                        // TODO: only the news
-                        for (k,v) in &karma {
-                            self.metrics.karma.with_label_values(&[k.as_str()]).set(*v as f64);
-                        }
                     } else if let Command::PING(ref srv1, ref _srv2) = message.command {
                         self.metrics.messages.with_label_values(&["ping"]).inc();
                         self.metrics.pings.with_label_values(&[srv1]).inc();
@@ -153,27 +193,22 @@ fn is_alnumvote(c: char) -> bool {
     is_alphanumeric(c) || c == '+' || c == '-'
 }
 
-fn parse_chat(text: &str, karma: &HashMap<UniCase<String>, i32>) -> HashMap<UniCase<String>, i32> {
+fn parse_chat<'a>(text: &'a str, karma: &mut Karma) -> IResult<&'a str, ()> {
     let words = terminated(take_while1(is_alnumvote), opt::<&str, &str, nom::error::Error<&str>, _>(take_till1(is_alphanumeric))); // opt(not(alphanumeric1)) doesn't work
     let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
     let mut downvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("--")));
-    let mut parser = fold_many0(words, HashMap::new, |mut new_karma, item| {
-        if let Ok((_, Some(term))) = upvote(item) {
-            let old_count = karma.get(&UniCase::new(term.to_owned())).unwrap_or(&0);
-            let new_count = new_karma.entry(UniCase::new(term.to_owned())).or_insert(*old_count);
-            *new_count += 1;
-        } else if let Ok((_, Some(term))) = downvote(item) {
-            let old_count = karma.get(&UniCase::new(term.to_owned())).unwrap_or(&0);
-            let new_count = new_karma.entry(UniCase::new(term.to_owned())).or_insert(*old_count);
-            *new_count -= 1;
-        }
-        new_karma
-    });
-    let res = parser(text);
-    debug!(?res, "Chat line parsing complete");
-
-    // TODO: bad assumption. Believe it will blow up on "^<poop>$"
-    res.unwrap().1
+    let mut parser = fold_many0(
+        words,
+        || (),
+        |(), item| {
+            if let Ok((_, Some(term))) = upvote(item) {
+                karma.bias(term, 1);
+            } else if let Ok((_, Some(term))) = downvote(item) {
+                karma.bias(term, -1);
+            }
+        },
+    );
+    parser(text)
 }
 
 fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
@@ -190,7 +225,7 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
     }
 }
 
-fn parse_dm(text: &str, karma: &HashMap<UniCase<String>, i32>) -> (HashMap<UniCase<String>, i32>, String) {
+fn parse_dm(text: &str, karma: &mut Karma) -> String {
     let mut p_karma = tuple((tag("karma"), opt(space1::<&str, nom::error::Error<&str>>), opt(alphanumeric1)));
     let mut p_admin = tuple((
         tag("mattisskill"),
@@ -207,19 +242,20 @@ fn parse_dm(text: &str, karma: &HashMap<UniCase<String>, i32>) -> (HashMap<UniCa
         match arg {
             None => {
                 info!("Command: karma all");
-                (hashmap![], format!("{:?}", karma))
+                format!("{}", karma)
             }
             Some(token) => {
                 info!(token, "Command: karma");
-                (hashmap![], format!("{}", karma.get(&UniCase::new(token.to_owned())).unwrap_or(&0)))
+                format!("{}", karma.get(token))
             }
         }
     } else if let Ok((_rest, (_, _, _, _, token, _, sign, val))) = p_admin(text) {
         let new_count = val.parse::<i32>().unwrap() * if sign == Some("-") { -1 } else { 1 };
         info!(token, new_count, "Command: mattisskill");
-        (hashmap![UniCase::new(token.to_owned()) => new_count], format!("{} now {}", token, new_count))
+        karma.set(token, new_count);
+        format!("{} now {}", token, new_count)
     } else {
-        (hashmap![], "unknown command / args".to_owned())
+        "unknown command / args".to_owned()
     }
 }
 
@@ -258,20 +294,22 @@ mod tests {
         ];
 
         for case in cases {
-            let k = HashMap::new();
-            assert_eq!(parse_chat(case.0, &k), fix_map_types(case.1));
+            let mut k = Karma::new(Metrics::new());
+            let res = parse_chat(case.0, &mut k);
+            assert!(res.is_ok(), "parse failed");
+            assert_eq!(k.k, fix_map_types(case.1));
         }
     }
 
     #[test]
     fn test_parse_dm_karma() {
-        let k = fix_map_types(hashmap![
-            "bacon" => 1,
-            "blɸwback" => -1,
-            "rust" => 666,
-            "LISP" => -666,
-        ]);
-        let k_rendered = format!("{:?}", k);
+        let mut k = Karma::new(Metrics::new());
+        k.set("bacon", 1);
+        k.set("blɸwback", -1);
+        k.set("rust", 666);
+        k.set("LISP", -666);
+        let k_rendered = format!("{}", k);
+
         let cases = [
             ("karma", k_rendered.as_str()),
             ("karma bacon", "1"),
@@ -281,29 +319,29 @@ mod tests {
         ];
 
         for case in cases {
-            let (_deltas, resp) = parse_dm(case.0, &k);
+            let resp = parse_dm(case.0, &mut k);
             assert_eq!(resp, case.1);
         }
     }
 
     #[test]
     fn test_parse_dm_admin() {
-        let k = fix_map_types(hashmap![
-            "bacon" => 1,
-            "blɸwback" => -1,
-            "rust" => 666,
-            "LISP" => -666,
-        ]);
+        let mut k = Karma::new(Metrics::new());
+        k.set("bacon", 1);
+        k.set("blɸwback", -1);
+        k.set("rust", 666);
+        k.set("LISP", -666);
+
         let cases = [
-            ("mattisskill set rust 612", "rust now 612", hashmap!["rust" => 612]),
-            ("mattisskill set new 42", "new now 42", hashmap!["new" => 42]),
-            ("mattisskill set newer -42", "newer now -42", hashmap!["newer" => -42]),
+            ("mattisskill set rust 612", "rust now 612", "rust", 612),
+            ("mattisskill set new 42", "new now 42", "new", 42),
+            ("mattisskill set newer -42", "newer now -42", "newer", -42),
         ];
 
         for case in cases {
-            let (news, resp) = parse_dm(case.0, &k);
+            let resp = parse_dm(case.0, &mut k);
             assert_eq!(resp, case.1);
-            assert_eq!(news, fix_map_types(case.2));
+            assert_eq!(k.get(case.2), &case.3);
         }
     }
 
