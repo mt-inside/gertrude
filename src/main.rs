@@ -101,9 +101,12 @@ impl Chatbot {
             tokio::select! {
                 Some(Ok(message)) = stream.next() => {
                     info!(?message, "received");
+
                     if let Command::PRIVMSG(ref recipient, ref text) = message.command {
                         let nick = client.current_nickname();
+                        self.metrics.messages.with_label_values(&["privmsg"]).inc();
                         if let Some(dm) = get_dm(nick, recipient, text) {
+                            self.metrics.dms.with_label_values(&[message.source_nickname().unwrap_or("unknown"), message.response_target().unwrap_or("unknown")]).inc();
                             let (deltas, resp) = parse_dm(dm, &karma);
                             karma.extend(deltas);
                             debug!(target = message.response_target(), "Sending response");
@@ -113,14 +116,18 @@ impl Chatbot {
                             let deltas = parse_chat(text, &karma);
                             karma.extend(deltas);
                         }
+
+                        info!(?karma, "Karma");
+                        // TODO: only the deltas
+                        for (k,v) in &karma {
+                            self.metrics.karma.with_label_values(&[k.as_str()]).set(*v as f64);
+                        }
                     } else if let Command::PING(ref srv1, ref _srv2) = message.command {
+                        self.metrics.messages.with_label_values(&["ping"]).inc();
                         self.metrics.pings.with_label_values(&[srv1]).inc();
                     } else if let Command::PONG(ref srv1, ref _srv2) = message.command {
+                        self.metrics.messages.with_label_values(&["pong"]).inc();
                         self.metrics.pongs.with_label_values(&[srv1]).inc();
-                    }
-                    info!(?karma, "Karma");
-                    for (k,v) in &karma {
-                        self.metrics.karma.with_label_values(&[k.as_str()]).set(*v as f64);
                     }
                 },
                 _ = subsys.on_shutdown_requested() => {
