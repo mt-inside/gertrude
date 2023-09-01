@@ -12,10 +12,10 @@ use futures::prelude::*;
 use irc::client::prelude::*;
 use metrics::Metrics;
 use nom::{
-    bytes::complete::{tag, take_till1, take_while1},
+    bytes::complete::{tag, take_till, take_till1, take_while1},
     combinator::opt,
     multi::fold_many0,
-    sequence::{terminated, tuple},
+    sequence::{delimited, terminated, tuple},
     IResult,
 };
 use nom_unicode::{
@@ -71,6 +71,8 @@ async fn main() -> Result<(), anyhow::Error> {
         .map_err(Into::into)
 }
 
+// TODO this type should persist to disk on updates, and read from disk when constructed.
+// - just serialize to protos
 struct Karma {
     k: HashMap<UniCase<String>, i32>,
     metrics: Metrics,
@@ -110,6 +112,7 @@ impl Karma {
 }
 
 impl fmt::Display for Karma {
+    // TODO: prettier, maybe sorted
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.k)
     }
@@ -138,9 +141,6 @@ impl Chatbot {
         let mut client = Client::from_config(config).await?;
         client.identify()?;
 
-        // TODO: need a karma type that wraps the map and updates metrics, logs, when set. Can also impl Display, and eg sort output by value
-        // TODO that type should also persist to disk on updates, and read from disk when constructed.
-        // - just serialize to protos
         let mut karma = Karma::new(self.metrics.clone());
         let mut stream = client.stream()?;
 
@@ -194,7 +194,7 @@ fn is_alnumvote(c: char) -> bool {
 }
 
 fn parse_chat<'a>(text: &'a str, karma: &mut Karma) -> IResult<&'a str, ()> {
-    let words = terminated(take_while1(is_alnumvote), opt::<&str, &str, nom::error::Error<&str>, _>(take_till1(is_alphanumeric))); // opt(not(alphanumeric1)) doesn't work
+    let words = delimited(take_till(is_alphanumeric), take_while1(is_alnumvote), take_till(is_alphanumeric));
     let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
     let mut downvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("--")));
     let mut parser = fold_many0(
@@ -288,9 +288,7 @@ mod tests {
             ),
             ("blɸwback++", hashmap!["blɸwback"=> 1]),
             ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
-                                      // "💩++" will fail, because TODO we need to strip
-                                      // non-alphanumeric from the start, else the words splitter
-                                      // won't work
+            ("💩++", hashmap![]),     // emoji aren't alphanumeric. Need a printable-non-space
         ];
 
         for case in cases {
