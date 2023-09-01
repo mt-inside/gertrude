@@ -38,6 +38,8 @@ pub struct HTTPSrv {
     m: Metrics,
 }
 
+// TODO: need a proper Data type, rather than it just _being_ Registry
+
 impl HTTPSrv {
     pub fn new(addr: String, m: Metrics) -> Self {
         Self { addr, m }
@@ -55,7 +57,7 @@ impl HTTPSrv {
         })
         .disable_signals()
         .bind(&self.addr)
-        .expect(&format!("Can't bind to {}", self.addr))
+        .unwrap_or_else(|_| panic!("Can't bind to {}", self.addr))
         .shutdown_timeout(5)
         .run()
     }
@@ -79,7 +81,7 @@ impl HTTPSrv {
     }
 }
 
-// TODO: move me (and the rest of the http serving gubbins. Metrics shouldn't own serve, rather serve should take a metrics handler - at which point Data will need to be everything all the handlers need; a custom struct, not just a Registry)
+// TODO: move me (and the rest of the http serving gubbins)
 #[get("/healthz")]
 async fn health(_data: actix_web::web::Data<Registry>, _req: HttpRequest) -> impl Responder {
     HttpResponse::Ok().json(hashmap!["health"=> "ok", "name" => crate::NAME, "version" => crate::VERSION])

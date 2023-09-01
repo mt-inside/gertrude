@@ -34,7 +34,7 @@ pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 #[command(name = NAME)]
 #[command(author = "Matt Turner")]
 #[command(version = VERSION)]
-#[command(about = "botten gertrude", long_about = None)]
+#[command(about = format!("botten {}", NAME), long_about = None)]
 struct Args {
     #[arg(short, long)]
     server: String,
@@ -52,18 +52,18 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Recall: foo=>tracing::Value; %foo=>fmt::Display; ?foo=>fmt::Debug
     tracing_subscriber::registry()
-        .with(filter::Targets::new().with_default(Level::INFO).with_target("gertrude", Level::TRACE))
+        .with(filter::Targets::new().with_default(Level::INFO).with_target(NAME, Level::TRACE))
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
+    // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
     let metrics = metrics::Metrics::new();
     let srv = metrics::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
-
-    // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
     let bot = Chatbot::new(args.clone(), metrics.clone());
+
     Toplevel::new()
-        .start("chatbot", move |subsys: SubsystemHandle| bot.lurk(subsys))
-        .start("metrics_server", move |subsys: SubsystemHandle| srv.serve(subsys))
+        .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
+        .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await
@@ -93,7 +93,7 @@ impl Chatbot {
         let mut client = Client::from_config(config).await?;
         client.identify()?;
 
-        // TODO: need a karma type that wraps the map and updates metrics, logs, when set
+        // TODO: need a karma type that wraps the map and updates metrics, logs, when set. Can also impl Display, and eg sort output by value
         let mut karma = HashMap::new();
         let mut stream = client.stream()?;
 
@@ -103,22 +103,29 @@ impl Chatbot {
                     info!(?message, "received");
 
                     if let Command::PRIVMSG(ref recipient, ref text) = message.command {
-                        let nick = client.current_nickname();
                         self.metrics.messages.with_label_values(&["privmsg"]).inc();
+
+                        let nick = client.current_nickname();
                         if let Some(dm) = get_dm(nick, recipient, text) {
-                            self.metrics.dms.with_label_values(&[message.source_nickname().unwrap_or("unknown"), message.response_target().unwrap_or("unknown")]).inc();
-                            let (deltas, resp) = parse_dm(dm, &karma);
-                            karma.extend(deltas);
-                            debug!(target = message.response_target(), "Sending response");
-                            client.send_privmsg(message.response_target().unwrap(), resp)?;
+                            let from = message.source_nickname().unwrap();
+                            let to = message.response_target().unwrap();
+
+                            self.metrics.dms.with_label_values(&[from, to]).inc();
+
+                            let (news, resp) = parse_dm(dm, &karma);
+                            karma.extend(news);
+
+                            debug!(target = to, "Sending response");
+                            client.send_privmsg(to, resp)?;
                         } else {
                             // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                            let deltas = parse_chat(text, &karma);
-                            karma.extend(deltas);
+                            let news = parse_chat(text, &karma);
+                            karma.extend(news);
                         }
 
+                        // TODO: only print if it changed. If we get news here (needed for below), we can just check for non-empty set
                         info!(?karma, "Karma");
-                        // TODO: only the deltas
+                        // TODO: only the news
                         for (k,v) in &karma {
                             self.metrics.karma.with_label_values(&[k.as_str()]).set(*v as f64);
                         }
@@ -142,6 +149,10 @@ impl Chatbot {
     }
 }
 
+fn is_alnumvote(c: char) -> bool {
+    is_alphanumeric(c) || c == '+' || c == '-'
+}
+
 fn parse_chat(text: &str, karma: &HashMap<UniCase<String>, i32>) -> HashMap<UniCase<String>, i32> {
     let words = terminated(take_while1(is_alnumvote), opt::<&str, &str, nom::error::Error<&str>, _>(take_till1(is_alphanumeric))); // opt(not(alphanumeric1)) doesn't work
     let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
@@ -161,7 +172,22 @@ fn parse_chat(text: &str, karma: &HashMap<UniCase<String>, i32>) -> HashMap<UniC
     let res = parser(text);
     debug!(?res, "Chat line parsing complete");
 
+    // TODO: bad assumption. Believe it will blow up on "^<poop>$"
     res.unwrap().1
+}
+
+fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
+    let mut p_dm = tuple((tag::<&str, &str, nom::error::Error<&str>>(nick), take_till1(is_alphanumeric)));
+
+    debug!(parse_result = ?p_dm(s), "Is it a DM?");
+
+    if target.eq(nick) {
+        Some(s)
+    } else if let Ok((rest, _)) = p_dm(s) {
+        Some(rest)
+    } else {
+        None
+    }
 }
 
 fn parse_dm(text: &str, karma: &HashMap<UniCase<String>, i32>) -> (HashMap<UniCase<String>, i32>, String) {
@@ -194,30 +220,6 @@ fn parse_dm(text: &str, karma: &HashMap<UniCase<String>, i32>) -> (HashMap<UniCa
         (hashmap![UniCase::new(token.to_owned()) => new_count], format!("{} now {}", token, new_count))
     } else {
         (hashmap![], "unknown command / args".to_owned())
-    }
-}
-
-fn is_alnumvote(c: char) -> bool {
-    is_alphanumeric(c) || c == '+' || c == '-'
-}
-
-// fn strip_nick<'a, 'b>(s: &'a str, nick: &'b str) -> &'a str {
-//     match s.strip_prefix(nick) {
-//         Some(msg) => msg.trim_start_matches([':', '>']).trim_start(),
-//         None => s,
-//     }
-// }
-fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
-    let mut p_dm = tuple((tag::<&str, &str, nom::error::Error<&str>>(nick), take_till1(is_alphanumeric)));
-
-    debug!(parse_result = ?p_dm(s), "Is it a DM?");
-
-    if target.eq(nick) {
-        Some(s)
-    } else if let Ok((rest, _)) = p_dm(s) {
-        Some(rest)
-    } else {
-        None
     }
 }
 
@@ -299,9 +301,9 @@ mod tests {
         ];
 
         for case in cases {
-            let (deltas, resp) = parse_dm(case.0, &k);
+            let (news, resp) = parse_dm(case.0, &k);
             assert_eq!(resp, case.1);
-            assert_eq!(deltas, fix_map_types(case.2));
+            assert_eq!(news, fix_map_types(case.2));
         }
     }
 
