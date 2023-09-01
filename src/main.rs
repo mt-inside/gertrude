@@ -1,8 +1,8 @@
 /* TODO
- * - metrics other interesting things like message count/rate, and of which are @gertie and actual dms
  * - admin command should be out-of-band: grpc interface I can hit (leave grpcurl scripts over loopback in repo)
  */
 
+mod http_srv;
 mod metrics;
 
 use std::{collections::HashMap, fmt};
@@ -59,7 +59,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
     let metrics = Metrics::new();
-    let srv = metrics::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
+    let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
     let bot = Chatbot::new(args.clone(), metrics.clone());
 
     Toplevel::new()
