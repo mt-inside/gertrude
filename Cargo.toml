@@ -23,6 +23,11 @@ tracing-subscriber = "0.3"
 prometheus = "0.13"
 actix-web = "4.4"
 miette = { version = "5.10", features = ["fancy"] }
+tonic = "0.10"
+prost = "0.12"
+
+[build-dependencies]
+tonic-build = "0.10"
 
 [profile.release]
 strip = true

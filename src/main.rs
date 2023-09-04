@@ -1,11 +1,18 @@
 /* TODO
- * - admin command should be out-of-band: grpc interface I can hit (leave grpcurl scripts over loopback in repo)
+ * - plugin arch using WASM. Plugins for
+ *   - stock price
+ *   - recording every spotify link send, with sender
  */
 
+mod admin;
 mod http_srv;
 mod metrics;
 
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, RwLock},
+};
 
 use clap::Parser;
 use futures::prelude::*;
@@ -19,7 +26,7 @@ use nom::{
     IResult,
 };
 use nom_unicode::{
-    complete::{alphanumeric1, digit1, space1},
+    complete::{alphanumeric1, space1},
     is_alphanumeric,
 };
 use tokio::time::Duration;
@@ -57,14 +64,16 @@ async fn main() -> Result<(), anyhow::Error> {
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
-    // I think metrics is an Arc (due to all the stuff in it being Arc?) TODO: make args an Arc rather than deriving clone
     let metrics = Metrics::new();
+    let karma = Karma::new(metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
-    let bot = Chatbot::new(args.clone(), metrics.clone());
+    let adm = admin::Admin::new(karma.clone());
+    let bot = Chatbot::new(args.clone(), karma.clone(), metrics.clone());
 
     Toplevel::new()
         .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
         .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
+        .start("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await
@@ -73,31 +82,44 @@ async fn main() -> Result<(), anyhow::Error> {
 
 // TODO this type should persist to disk on updates, and read from disk when constructed.
 // - just serialize to protos
-struct Karma {
-    k: HashMap<UniCase<String>, i32>,
+#[derive(Clone)]
+pub struct Karma {
+    k: Arc<RwLock<HashMap<UniCase<String>, i32>>>,
     metrics: Metrics,
 }
 
 impl Karma {
     fn new(metrics: Metrics) -> Self {
-        Self { k: HashMap::new(), metrics }
+        Self {
+            k: Arc::new(RwLock::new(HashMap::new())),
+            metrics,
+        }
     }
 
-    fn get(&self, term: &str) -> &i32 {
-        self.k.get(&UniCase::new(term.to_owned())).unwrap_or(&0)
+    fn get(&self, term: &str) -> i32 {
+        let read = self.k.read().unwrap();
+        let val = read.get(&UniCase::new(term.to_owned())).unwrap_or(&0);
+        val.clone()
     }
 
-    fn set(&mut self, term: &str, new: i32) {
-        let cur = self.k.entry(UniCase::new(term.to_owned())).or_insert(0);
+    fn set(&self, term: &str, new: i32) -> i32 {
+        let mut write = self.k.write().unwrap();
+        let cur = write.entry(UniCase::new(term.to_owned())).or_insert(0);
+        let old = *cur;
         *cur = new;
+        drop(write);
 
-        self.publish(term, new)
+        self.publish(term, new);
+
+        old
     }
 
-    fn bias(&mut self, term: &str, diff: i32) -> i32 {
-        let cur = self.k.entry(UniCase::new(term.to_owned())).or_insert(0);
+    fn bias(&self, term: &str, diff: i32) -> i32 {
+        let mut write = self.k.write().unwrap();
+        let cur = write.entry(UniCase::new(term.to_owned())).or_insert(0);
         *cur += diff;
         let new = *cur;
+        drop(write);
 
         self.publish(term, new);
 
@@ -114,20 +136,23 @@ impl Karma {
 impl fmt::Display for Karma {
     // TODO: prettier, maybe sorted
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.k)
+        let read = self.k.read().unwrap();
+        write!(f, "{:?}", read)
     }
 }
 
 struct Chatbot {
     args: Args,
+    karma: Karma,
     metrics: Metrics,
 }
 
 impl Chatbot {
-    fn new(args: Args, metrics: Metrics) -> Self {
-        Self { args, metrics }
+    pub fn new(args: Args, karma: Karma, metrics: Metrics) -> Self {
+        Self { args, karma, metrics }
     }
 
+    // karma should be refcell rather than taking mut here (actually, the map in karma should be refcell)
     async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
         let config = Config {
             nickname: Some(self.args.nick.clone()),
@@ -141,7 +166,6 @@ impl Chatbot {
         let mut client = Client::from_config(config).await?;
         client.identify()?;
 
-        let mut karma = Karma::new(self.metrics.clone());
         let mut stream = client.stream()?;
 
         loop {
@@ -159,13 +183,13 @@ impl Chatbot {
 
                             self.metrics.dms.with_label_values(&[from, to]).inc();
 
-                            let resp = parse_dm(dm, &mut karma);
+                            let resp = parse_dm(dm, &self.karma);
 
                             debug!(target = to, "Sending response");
                             client.send_privmsg(to, resp)?;
                         } else {
                             // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                             let res = parse_chat(text, &mut karma);
+                             let res = parse_chat(text, &self.karma);
                              debug!(?res, "Chat parsing result");
                         }
 
@@ -193,7 +217,7 @@ fn is_alnumvote(c: char) -> bool {
     is_alphanumeric(c) || c == '+' || c == '-'
 }
 
-fn parse_chat<'a>(text: &'a str, karma: &mut Karma) -> IResult<&'a str, ()> {
+fn parse_chat<'a>(text: &'a str, karma: &Karma) -> IResult<&'a str, ()> {
     let words = delimited(take_till(is_alphanumeric), take_while1(is_alnumvote), take_till(is_alphanumeric));
     let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
     let mut downvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("--")));
@@ -225,18 +249,8 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
     }
 }
 
-fn parse_dm(text: &str, karma: &mut Karma) -> String {
+fn parse_dm(text: &str, karma: &Karma) -> String {
     let mut p_karma = tuple((tag("karma"), opt(space1::<&str, nom::error::Error<&str>>), opt(alphanumeric1)));
-    let mut p_admin = tuple((
-        tag("mattisskill"),
-        space1::<&str, nom::error::Error<&str>>,
-        tag("set"),
-        space1::<&str, nom::error::Error<&str>>,
-        alphanumeric1,
-        space1::<&str, nom::error::Error<&str>>,
-        opt(tag("-")),
-        digit1,
-    ));
 
     if let Ok((_rest, (_, _, arg))) = p_karma(text) {
         match arg {
@@ -249,11 +263,6 @@ fn parse_dm(text: &str, karma: &mut Karma) -> String {
                 format!("{}", karma.get(token))
             }
         }
-    } else if let Ok((_rest, (_, _, _, _, token, _, sign, val))) = p_admin(text) {
-        let new_count = val.parse::<i32>().unwrap() * if sign == Some("-") { -1 } else { 1 };
-        info!(token, new_count, "Command: mattisskill");
-        karma.set(token, new_count);
-        format!("{} now {}", token, new_count)
     } else {
         "unknown command / args".to_owned()
     }
