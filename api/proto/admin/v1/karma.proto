@@ -1,0 +1,15 @@
+syntax = "proto3";
+package admin.v1;
+
+service KarmaService {
+  rpc Set (SetRequest) returns (SetResponse);
+}
+
+message SetRequest {
+  string term = 1;
+  int32 value = 2;
+}
+
+message SetResponse {
+  int32 old_value = 1;
+}
