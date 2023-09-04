@@ -1,7 +1,7 @@
 package:
   name: gertrude
   epoch: 0
-  version: 6e6e8d7-dirty
+  version: v0.1.0-dirty
   description: botten gertrude
   url: https://github.com/mt-inside/gertrude
   copyright:
@@ -20,6 +20,7 @@ environment:
       - pkgconf
       - openssl-dev
       - rust
+      - protobuf-dev
       - just
       - git
 pipeline:
