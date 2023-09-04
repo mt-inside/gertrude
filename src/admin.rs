@@ -11,7 +11,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::*;
 
-use super::Karma;
+use crate::karma::Karma;
 
 #[derive(Error, Debug)]
 pub enum AdminError {
@@ -43,7 +43,7 @@ impl Admin {
                 info!("gRPC server task got shutdown request");
             })
             .await
-            .map_err(|e| AdminError::Runtime(e))
+            .map_err(AdminError::Runtime)
     }
 }
 

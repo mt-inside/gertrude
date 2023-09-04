@@ -32,6 +32,12 @@ impl Metrics {
     }
 }
 
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[get("/metrics")]
 async fn handle_metrics(data: actix_web::web::Data<SrvData>, _req: HttpRequest) -> impl Responder {
     let encoder = TextEncoder::new();
