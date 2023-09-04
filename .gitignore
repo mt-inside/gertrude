@@ -1,1 +1,5 @@
 /target
+.env
+melange.rsa*
+packages/
+sbom-*
