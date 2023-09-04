@@ -27,7 +27,7 @@ jobs:
         run: echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
 
       - name: Lint & Test
-        run: just test
+        run: just test-with-coverage
 
       # For this to work, the repo needs setting up on Coveralls.io
       - name: Coveralls Upload

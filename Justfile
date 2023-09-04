@@ -23,6 +23,9 @@ lint:
 	cargo clippy -- -D warnings
 
 test: lint
+	cargo test --all
+
+test-with-coverage: lint
 	#!/bin/bash
 	export RUSTFLAGS="-Cinstrument-coverage"
 	export LLVM_PROFILE_FILE="gertrude-%p-%m.profraw"
@@ -30,17 +33,21 @@ test: lint
 	# Convert the profraw files into lcov
 	mkdir -p target/debug/coverage
 	grcov . -s . --binary-path target/debug/ -t lcov --branch --ignore-not-existing --keep-only 'src/*' -o target/debug/coverage/
+	rm -f *profraw
 
-coverage-view: test
+coverage-view: test-with-coverage
 	mkdir -p target/debug/coverage
 	grcov . -s . --binary-path target/debug/ -t html --branch --ignore-not-existing --keep-only 'src/*' -o target/debug/coverage/
 	open target/debug/coverage/html/index.html
 
-build:
+build: test
 	cargo build
 
 build-ci:
 	cargo build --release
+
+run-freenode: test
+	RUST_BACKTRACE=1 cargo run -- -s chat.freenode.net -c '#test'
 
 package: test
 	rm -rf ./packages/
