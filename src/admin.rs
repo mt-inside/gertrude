@@ -30,13 +30,20 @@ impl Admin {
         Self { k }
     }
 
-    pub async fn serve(self, _subsys: SubsystemHandle) -> Result<(), AdminError> {
+    pub async fn serve(self, subsys: SubsystemHandle) -> Result<(), AdminError> {
         let addr = "[::1]:50051".parse()?;
 
         info!(%addr, "Serving admin gRPC interface");
 
-        // TODO: shutdown
-        Server::builder().add_service(KarmaServiceServer::new(self)).serve(addr).await.map_err(|e| AdminError::Runtime(e))
+        Server::builder()
+            .add_service(KarmaServiceServer::new(self))
+            // Tonic wants notifying of shutdown by a future that completes
+            .serve_with_shutdown(addr, async {
+                subsys.on_shutdown_requested().await;
+                info!("gRPC server task got shutdown request");
+            })
+            .await
+            .map_err(|e| AdminError::Runtime(e))
     }
 }
 
