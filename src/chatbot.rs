@@ -1,3 +1,5 @@
+use std::fs;
+
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
@@ -38,6 +40,8 @@ wai_bindgen_wasmer::import!("plugin.wai");
 
 #[derive(Error, Debug)]
 pub enum WasmError {
+    #[error("Load error")]
+    Load(#[from] std::io::Error),
     #[error("Compile error")]
     Compile(#[from] wasmer::IoCompileError),
     #[error("Instantiation error")]
@@ -46,16 +50,58 @@ pub enum WasmError {
     Runtime(#[from] wasmer::RuntimeError),
 }
 
-fn wasm_wrapper(msg: &str) -> Result<String, WasmError> {
-    let mut store = Store::default();
-    let module = Module::from_file(&store, "/Users/matt/work/personal/src/gertrude-spotify/pkg/spotify_bg.wasm")?;
-    let mut imports = imports! {};
-    let (s, _instance) = plugin::Plugin::instantiate(&mut store, &module, &mut imports)?;
+struct P {
+    p: plugin::Plugin,
+    store: Store,
+}
+struct Ps {
+    ps: Vec<P>,
+}
 
-    let result = s.handle_privmsg(&mut store, msg);
-    info!(?result, "WASM!");
+impl Ps {
+    // TODO: error handling. Should ctors return result? (ie throw?). Should it stash path and have
+    // an init() fn? Should that use typestates?
+    fn new(plugin_dir: &str) -> Self {
+        // TODO: prolly wanna map rather than pushing into a vec
+        let mut ps = vec![];
 
-    result.map_err(WasmError::Runtime)
+        for entry in fs::read_dir(plugin_dir).unwrap() {
+            debug!(?entry, "plugin dir");
+            if let Ok(dent) = entry {
+                if let Some(os_ext) = dent.path().extension() {
+                    if let Some(ext) = os_ext.to_str() {
+                        // TODO: case insensitive
+                        if ext.to_lowercase() == "wasm" {
+                            info!(?dent, "loading plugin");
+
+                            let mut store = Store::default();
+                            let module = Module::from_file(&store, dent.path()).unwrap();
+                            let mut imports = imports! {};
+                            let (p, _instance) = plugin::Plugin::instantiate(&mut store, &module, &mut imports).unwrap();
+
+                            ps.push(P { p, store });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ps { ps }
+    }
+
+    // TODO: store in refcell, no mut self
+    fn handle_privmsg(&mut self, msg: &str) -> Vec<Result<String, WasmError>> {
+        // TODO: prolly wanna map rather than pushing into a vec
+        let mut rs = vec![];
+
+        for p in &mut self.ps {
+            let result = p.p.handle_privmsg(&mut p.store, msg);
+            debug!(?result, "Plugin");
+            rs.push(result.map_err(WasmError::Runtime));
+        }
+
+        rs
+    }
 }
 
 impl Chatbot {
@@ -65,6 +111,8 @@ impl Chatbot {
 
     // karma should be refcell rather than taking mut here (actually, the map in karma should be refcell)
     pub async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
+        let mut plugins = Ps::new(&self.args.plugin_dir);
+
         let config = Config {
             nickname: Some(self.args.nick.clone()),
             server: Some(self.args.server.clone()),
@@ -104,9 +152,11 @@ impl Chatbot {
                              debug!(?res, "Chat parsing result");
 
                             // See if any of the plugins want to say anything
-                            match wasm_wrapper(text) {
-                                Ok(output) => client.send_privmsg(message.response_target().unwrap(), output)?,
-                                Err(e) => error!(?e, "WASM"),
+                            for res in plugins.handle_privmsg(text) {
+                                match res {
+                                    Ok(output) => client.send_privmsg(message.response_target().unwrap(), output)?,
+                                    Err(e) => error!(?e, "WASM"), // TODO also send to channel
+                                }
                             }
                         }
 
