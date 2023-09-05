@@ -104,8 +104,9 @@ impl Chatbot {
                              debug!(?res, "Chat parsing result");
 
                             // See if any of the plugins want to say anything
-                            if let Ok(output) = wasm_wrapper(text) {
-                                client.send_privmsg(message.response_target().unwrap(), output)?;
+                            match wasm_wrapper(text) {
+                                Ok(output) => client.send_privmsg(message.response_target().unwrap(), output)?,
+                                Err(e) => error!(?e, "WASM"),
                             }
                         }
 
