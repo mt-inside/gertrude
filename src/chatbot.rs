@@ -11,8 +11,10 @@ use nom_unicode::{
     complete::{alphanumeric1, space1},
     is_alphanumeric,
 };
+use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
+use wasmer::{imports, Module, Store};
 
 use super::Args;
 use crate::{karma::Karma, metrics::Metrics};
@@ -21,6 +23,39 @@ pub struct Chatbot {
     args: Args,
     karma: Karma,
     metrics: Metrics,
+}
+
+/* wtf?
+ * - interface defined in wai file. Can include non-WASM types like strings and structs (records)
+ * - using the macro crates in https://github.com/wasmerio/wai to generate bindings on both sides
+ *   - rust::export in the plugins (as they export the interface)
+ *   - wasmer::import here (as we're importing the interface into a wasmer engine)
+ *   - these use the same underlying bindgen code, which also has a cli: https://github.com/wasmerio/wai (though I can't make it work)
+ *   - use `cargo expand` to see what those macros expand to
+ * - this is a fork of https://github.com/bytecodealliance/wit-bindgen, who refused to add wasmer as a target
+ */
+wai_bindgen_wasmer::import!("plugin.wai");
+
+#[derive(Error, Debug)]
+pub enum WasmError {
+    #[error("Compile error")]
+    Compile(#[from] wasmer::IoCompileError),
+    #[error("Instantiation error")]
+    Instantiate(#[from] anyhow::Error),
+    #[error("Runtime error")]
+    Runtime(#[from] wasmer::RuntimeError),
+}
+
+fn wasm_wrapper(msg: &str) -> Result<String, WasmError> {
+    let mut store = Store::default();
+    let module = Module::from_file(&store, "/Users/matt/work/personal/src/gertrude-spotify/pkg/spotify_bg.wasm")?;
+    let mut imports = imports! {};
+    let (s, _instance) = plugin::Plugin::instantiate(&mut store, &module, &mut imports)?;
+
+    let result = s.handle_privmsg(&mut store, msg);
+    info!(?result, "WASM!");
+
+    result.map_err(WasmError::Runtime)
 }
 
 impl Chatbot {
@@ -67,6 +102,11 @@ impl Chatbot {
                             // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
                              let res = parse_chat(text, &self.karma);
                              debug!(?res, "Chat parsing result");
+
+                            // See if any of the plugins want to say anything
+                            if let Ok(output) = wasm_wrapper(text) {
+                                client.send_privmsg(message.response_target().unwrap(), output)?;
+                            }
                         }
 
                     } else if let Command::PING(ref srv1, ref _srv2) = message.command {
