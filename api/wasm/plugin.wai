@@ -1,0 +1,1 @@
+handle-privmsg: func(msg: string) -> string
