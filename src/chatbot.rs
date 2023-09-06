@@ -61,32 +61,13 @@ struct Ps {
 impl Ps {
     // TODO: error handling. Should ctors return result? (ie throw?). Should it stash path and have
     // an init() fn? Should that use typestates?
-    fn new(plugin_dir: &str) -> Self {
-        // TODO: prolly wanna map rather than pushing into a vec
-        let mut ps = vec![];
-
-        for entry in fs::read_dir(plugin_dir).unwrap() {
-            debug!(?entry, "plugin dir");
-            if let Ok(dent) = entry {
-                if let Some(os_ext) = dent.path().extension() {
-                    if let Some(ext) = os_ext.to_str() {
-                        // TODO: case insensitive
-                        if ext.to_lowercase() == "wasm" {
-                            info!(?dent, "loading plugin");
-
-                            let mut store = Store::default();
-                            let module = Module::from_file(&store, dent.path()).unwrap();
-                            let mut imports = imports! {};
-                            let (p, _instance) = plugin::Plugin::instantiate(&mut store, &module, &mut imports).unwrap();
-
-                            ps.push(P { p, store });
-                        }
-                    }
-                }
-            }
+    fn new(plugin_dir: Option<&str>) -> Self {
+        match plugin_dir {
+            None => Self { ps: vec![] },
+            Some(plugin_dir) => Self {
+                ps: fs::read_dir(plugin_dir).unwrap().filter_map(|entry| try_load(entry)).collect(),
+            },
         }
-
-        Ps { ps }
     }
 
     // TODO: store in refcell, no mut self
@@ -104,6 +85,38 @@ impl Ps {
     }
 }
 
+fn try_load(entry: Result<fs::DirEntry, std::io::Error>) -> Option<P> {
+    debug!(?entry, "plugin dir");
+    if let Ok(dent) = entry {
+        if let Some(os_ext) = dent.path().extension() {
+            if let Some(ext) = os_ext.to_str() {
+                if ext.to_lowercase() == "wasm" {
+                    info!(?dent, "loading plugin");
+
+                    let mut store = Store::default();
+                    match Module::from_file(&store, dent.path()) {
+                        Ok(module) => {
+                            let mut imports = imports! {};
+                            match plugin::Plugin::instantiate(&mut store, &module, &mut imports) {
+                                Ok((p, _instance)) => {
+                                    return Some(P { p, store });
+                                }
+                                Err(e) => {
+                                    error!(?e, "Failed to instantiate WASM plugin");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(?e, "Failed to load WASM plugin");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 impl Chatbot {
     pub fn new(args: Args, karma: Karma, metrics: Metrics) -> Self {
         Self { args, karma, metrics }
@@ -111,7 +124,7 @@ impl Chatbot {
 
     // karma should be refcell rather than taking mut here (actually, the map in karma should be refcell)
     pub async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
-        let mut plugins = Ps::new(&self.args.plugin_dir);
+        let mut plugins = Ps::new(self.args.plugin_dir.as_deref());
 
         let config = Config {
             nickname: Some(self.args.nick.clone()),

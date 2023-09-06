@@ -34,7 +34,7 @@ pub struct Args {
     #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
     http_addr: String,
     #[arg(long)]
-    plugin_dir: String,
+    plugin_dir: Option<String>,
 }
 
 #[tokio::main]
