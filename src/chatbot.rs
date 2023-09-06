@@ -1,5 +1,3 @@
-use std::fs;
-
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
@@ -13,123 +11,25 @@ use nom_unicode::{
     complete::{alphanumeric1, space1},
     is_alphanumeric,
 };
-use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
-use wasmer::{imports, Module, Store};
 
 use super::Args;
-use crate::{karma::Karma, metrics::Metrics};
+use crate::{karma::Karma, metrics::Metrics, plugins::WasmPlugins};
 
 pub struct Chatbot {
     args: Args,
     karma: Karma,
+    plugins: WasmPlugins,
     metrics: Metrics,
 }
 
-/* wtf?
- * - interface defined in wai file. Can include non-WASM types like strings and structs (records)
- * - using the macro crates in https://github.com/wasmerio/wai to generate bindings on both sides
- *   - rust::export in the plugins (as they export the interface)
- *   - wasmer::import here (as we're importing the interface into a wasmer engine)
- *   - these use the same underlying bindgen code, which also has a cli: https://github.com/wasmerio/wai (though I can't make it work)
- *   - use `cargo expand` to see what those macros expand to
- * - this is a fork of https://github.com/bytecodealliance/wit-bindgen, who refused to add wasmer as a target
- */
-wai_bindgen_wasmer::import!("api/wasm/plugin.wai");
-
-#[derive(Error, Debug)]
-pub enum WasmError {
-    #[error("Load error")]
-    Load(#[from] std::io::Error),
-    #[error("Compile error")]
-    Compile(#[from] wasmer::IoCompileError),
-    #[error("Instantiation error")]
-    Instantiate(#[from] anyhow::Error),
-    #[error("Runtime error")]
-    Runtime(#[from] wasmer::RuntimeError),
-}
-
-struct WasmPlugin {
-    p: plugin::Plugin,
-    store: Store,
-}
-#[derive(Default)]
-struct WasmPlugins {
-    ps: Vec<WasmPlugin>,
-}
-
-impl WasmPlugins {
-    fn new(plugin_dir: Option<&str>) -> Self {
-        match plugin_dir {
-            None => Default::default(),
-            Some(plugin_dir) => Self {
-                ps: match fs::read_dir(plugin_dir) {
-                    Ok(entries) => entries.filter_map(|entry| try_load(entry)).collect(),
-                    Err(e) => {
-                        error!(?e, "can't read plugin dir");
-                        Default::default()
-                    }
-                },
-            },
-        }
-    }
-
-    // TODO: store in refcell, no mut self
-    fn handle_privmsg(&mut self, msg: &str) -> Vec<Result<String, WasmError>> {
-        // TODO: prolly wanna map rather than pushing into a vec
-        let mut rs = vec![];
-
-        for p in &mut self.ps {
-            let result = p.p.handle_privmsg(&mut p.store, msg);
-            debug!(?result, "Plugin");
-            rs.push(result.map_err(WasmError::Runtime));
-        }
-
-        rs
-    }
-}
-
-fn try_load(entry: Result<fs::DirEntry, std::io::Error>) -> Option<WasmPlugin> {
-    debug!(?entry, "plugin dir");
-    if let Ok(dent) = entry {
-        if let Some(os_ext) = dent.path().extension() {
-            if let Some(ext) = os_ext.to_str() {
-                if ext.to_lowercase() == "wasm" {
-                    info!(?dent, "loading plugin");
-
-                    let mut store = Store::default();
-                    match Module::from_file(&store, dent.path()) {
-                        Ok(module) => {
-                            let mut imports = imports! {};
-                            match plugin::Plugin::instantiate(&mut store, &module, &mut imports) {
-                                Ok((p, _instance)) => {
-                                    return Some(WasmPlugin { p, store });
-                                }
-                                Err(e) => {
-                                    error!(?e, "Failed to instantiate WASM plugin");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!(?e, "Failed to load WASM plugin");
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 impl Chatbot {
-    pub fn new(args: Args, karma: Karma, metrics: Metrics) -> Self {
-        Self { args, karma, metrics }
+    pub fn new(args: Args, karma: Karma, plugins: WasmPlugins, metrics: Metrics) -> Self {
+        Self { args, karma, plugins, metrics }
     }
 
     pub async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
-        let mut plugins = WasmPlugins::new(self.args.plugin_dir.as_deref());
-
         let config = Config {
             nickname: Some(self.args.nick.clone()),
             server: Some(self.args.server.clone()),
@@ -169,7 +69,7 @@ impl Chatbot {
                              debug!(?res, "Chat parsing result");
 
                             // See if any of the plugins want to say anything
-                            for res in plugins.handle_privmsg(text) {
+                            for res in self.plugins.handle_privmsg(text) {
                                 match res {
                                     Ok(output) => client.send_privmsg(message.response_target().unwrap(), output)?,
                                     Err(e) => error!(?e, "WASM"), // TODO also send to channel

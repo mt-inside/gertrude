@@ -1,0 +1,19 @@
+syntax = "proto3";
+package admin.v1;
+
+service PluginsService {
+  rpc List (ListRequest) returns (ListResponse);
+}
+
+message ListRequest {
+}
+
+message ListResponse {
+  repeated PluginInfo plugins = 1;
+}
+
+message PluginInfo {
+  string name = 1;
+  string path = 2;
+  uint64 size = 3;
+}

@@ -4,11 +4,14 @@
  *   - recording every spotify link send, with sender
  */
 
+#![feature(path_file_prefix)]
+
 mod admin;
 mod chatbot;
 mod http_srv;
-pub mod karma;
-pub mod metrics;
+mod karma;
+mod metrics;
+mod plugins;
 
 use clap::Parser;
 use tokio::time::Duration;
@@ -48,10 +51,11 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     let metrics = metrics::Metrics::new();
+    let plugins = plugins::WasmPlugins::new(args.plugin_dir.as_deref());
     let karma = karma::Karma::new(metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
-    let adm = admin::Admin::new(karma.clone());
-    let bot = chatbot::Chatbot::new(args.clone(), karma.clone(), metrics.clone());
+    let adm = admin::Admin::new(karma.clone(), plugins.clone());
+    let bot = chatbot::Chatbot::new(args.clone(), karma.clone(), plugins.clone(), metrics.clone());
 
     Toplevel::new()
         .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))

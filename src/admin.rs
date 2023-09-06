@@ -4,14 +4,15 @@ pub mod admin_proto {
 
 use admin_proto::{
     karma_service_server::{KarmaService, KarmaServiceServer},
-    SetRequest, SetResponse,
+    plugins_service_server::{PluginsService, PluginsServiceServer},
+    ListRequest, ListResponse, PluginInfo, SetRequest, SetResponse,
 };
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::*;
 
-use crate::karma::Karma;
+use crate::{karma::Karma, plugins::WasmPlugins};
 
 #[derive(Error, Debug)]
 pub enum AdminError {
@@ -23,11 +24,11 @@ pub enum AdminError {
 
 pub struct Admin {
     k: Karma,
+    ps: WasmPlugins,
 }
-
 impl Admin {
-    pub fn new(k: Karma) -> Self {
-        Self { k }
+    pub fn new(k: Karma, ps: WasmPlugins) -> Self {
+        Self { k, ps }
     }
 
     pub async fn serve(self, subsys: SubsystemHandle) -> Result<(), AdminError> {
@@ -36,7 +37,8 @@ impl Admin {
         info!(%addr, "Serving admin gRPC interface");
 
         Server::builder()
-            .add_service(KarmaServiceServer::new(self))
+            .add_service(KarmaServiceServer::new(KarmaSrv::new(self.k)))
+            .add_service(PluginsServiceServer::new(PluginsSrv::new(self.ps)))
             // Tonic wants notifying of shutdown by a future that completes
             .serve_with_shutdown(addr, async {
                 subsys.on_shutdown_requested().await;
@@ -47,8 +49,16 @@ impl Admin {
     }
 }
 
+struct KarmaSrv {
+    k: Karma,
+}
+impl KarmaSrv {
+    fn new(k: Karma) -> Self {
+        Self { k }
+    }
+}
 #[tonic::async_trait]
-impl KarmaService for Admin {
+impl KarmaService for KarmaSrv {
     async fn set(&self, request: Request<SetRequest>) -> Result<Response<SetResponse>, Status> {
         debug!(?request, "Got karma set request");
 
@@ -57,5 +67,36 @@ impl KarmaService for Admin {
         let reply = SetResponse { old_value: old };
 
         Ok(Response::new(reply))
+    }
+}
+
+struct PluginsSrv {
+    ps: WasmPlugins,
+}
+impl PluginsSrv {
+    fn new(ps: WasmPlugins) -> Self {
+        Self { ps }
+    }
+}
+#[tonic::async_trait]
+impl PluginsService for PluginsSrv {
+    async fn list(&self, request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
+        debug!(?request, "Got plugins list request");
+
+        self.ps.ps.iter().for_each(|p| info!(?p.path, p.size, "Plugin"));
+
+        Ok(Response::new(ListResponse {
+            plugins: self
+                .ps
+                .ps
+                .iter()
+                .map(|p| PluginInfo {
+                    // TODO: make optional in the proto
+                    name: p.path.file_prefix().map(|p| p.to_string_lossy().to_string()).unwrap_or("<unknown>".to_owned()),
+                    path: p.path.to_string_lossy().to_string(),
+                    size: p.size.unwrap_or(0),
+                })
+                .collect(),
+        }))
     }
 }

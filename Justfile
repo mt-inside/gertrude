@@ -47,7 +47,7 @@ build-ci:
 	cargo build --release
 
 run-freenode: test
-	RUST_BACKTRACE=1 cargo run -- -s chat.freenode.net -c '#test'
+	RUST_BACKTRACE=1 cargo run -- -s chat.freenode.net -c '#test' --plugin-dir ${PWD}/../gertrude-spotify/target/wasm32-unknown-unknown/debug/
 
 package: test
 	rm -rf ./packages/
