@@ -50,22 +50,27 @@ pub enum WasmError {
     Runtime(#[from] wasmer::RuntimeError),
 }
 
-struct P {
+struct WasmPlugin {
     p: plugin::Plugin,
     store: Store,
 }
-struct Ps {
-    ps: Vec<P>,
+#[derive(Default)]
+struct WasmPlugins {
+    ps: Vec<WasmPlugin>,
 }
 
-impl Ps {
-    // TODO: error handling. Should ctors return result? (ie throw?). Should it stash path and have
-    // an init() fn? Should that use typestates?
+impl WasmPlugins {
     fn new(plugin_dir: Option<&str>) -> Self {
         match plugin_dir {
-            None => Self { ps: vec![] },
+            None => Default::default(),
             Some(plugin_dir) => Self {
-                ps: fs::read_dir(plugin_dir).unwrap().filter_map(|entry| try_load(entry)).collect(),
+                ps: match fs::read_dir(plugin_dir) {
+                    Ok(entries) => entries.filter_map(|entry| try_load(entry)).collect(),
+                    Err(e) => {
+                        error!(?e, "can't read plugin dir");
+                        Default::default()
+                    }
+                },
             },
         }
     }
@@ -85,7 +90,7 @@ impl Ps {
     }
 }
 
-fn try_load(entry: Result<fs::DirEntry, std::io::Error>) -> Option<P> {
+fn try_load(entry: Result<fs::DirEntry, std::io::Error>) -> Option<WasmPlugin> {
     debug!(?entry, "plugin dir");
     if let Ok(dent) = entry {
         if let Some(os_ext) = dent.path().extension() {
@@ -99,7 +104,7 @@ fn try_load(entry: Result<fs::DirEntry, std::io::Error>) -> Option<P> {
                             let mut imports = imports! {};
                             match plugin::Plugin::instantiate(&mut store, &module, &mut imports) {
                                 Ok((p, _instance)) => {
-                                    return Some(P { p, store });
+                                    return Some(WasmPlugin { p, store });
                                 }
                                 Err(e) => {
                                     error!(?e, "Failed to instantiate WASM plugin");
@@ -122,9 +127,8 @@ impl Chatbot {
         Self { args, karma, metrics }
     }
 
-    // karma should be refcell rather than taking mut here (actually, the map in karma should be refcell)
     pub async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
-        let mut plugins = Ps::new(self.args.plugin_dir.as_deref());
+        let mut plugins = WasmPlugins::new(self.args.plugin_dir.as_deref());
 
         let config = Config {
             nickname: Some(self.args.nick.clone()),
