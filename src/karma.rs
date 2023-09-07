@@ -63,10 +63,21 @@ impl Karma {
 }
 
 impl fmt::Display for Karma {
-    // TODO: prettier, maybe sorted
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let read = self.k.read().unwrap();
-        write!(f, "{:?}", read)
+        let m = self.k.read().unwrap();
+        let mut v: Vec<(&UniCase<String>, &i32)> = m.iter().collect();
+        v.sort_by(|a, b| b.1.cmp(a.1));
+        let mut first = true;
+        let render = v.iter().fold(String::new(), |mut acc, (k, v)| {
+            if first {
+                first = false
+            } else {
+                acc.push_str("; ")
+            }
+            acc.push_str(&format!("{}: {}", k, v));
+            acc
+        });
+        write!(f, "{}", render)
     }
 }
 
@@ -95,5 +106,23 @@ impl PartialEq<HashMap<&str, i32>> for Karma {
         let m_covers_k = k.iter().fold(true, |acc, (k1, _)| acc && m.get(k1.as_str()).is_some());
 
         k_covers_m && m_covers_k
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use maplit::hashmap;
+
+    use super::*;
+
+    #[test]
+    fn test_display() {
+        let k = Karma::from(hashmap![
+            "bacon" => 1,
+            "blɸwback" => -1,
+            "rust" => 666,
+            "LISP" => -666,
+        ]);
+        assert_eq!(format!("{}", k), "rust: 666; bacon: 1; blɸwback: -1; LISP: -666");
     }
 }

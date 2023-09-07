@@ -156,10 +156,7 @@ fn parse_dm(text: &str, karma: &Karma) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use maplit::hashmap;
-    use unicase::UniCase;
 
     use super::*;
 
@@ -192,9 +189,9 @@ mod tests {
     #[test]
     fn test_parse_dm_karma() {
         let k = Karma::from(hashmap![
-            "bacon"=> 1,
-            "blɸwback"=> -1,
-            "rust"=> 666,
+            "bacon" => 1,
+            "blɸwback" => -1,
+            "rust" => 666,
             "LISP" => -666,
         ]);
         let k_rendered = format!("{}", k);
