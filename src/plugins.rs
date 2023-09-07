@@ -40,51 +40,56 @@ pub enum WasmError {
 
 #[derive(Clone)]
 pub struct WasmPlugins {
-    dir: String,
+    dir: Option<String>,
     // TODO: can remove inner Arc?
     pub ps: Arc<RwLock<Vec<Arc<WasmPlugin>>>>,
 }
 
 impl WasmPlugins {
-    // TODO: watch this directory for new files
-    pub fn new(plugin_dir: &str) -> Self {
-        // notify doesn't seem to have a mode where it emits Create events for existing files, so we read the dir here.
-        info!(plugin_dir, "Loading initial plugins");
-        let ps = match fs::read_dir(plugin_dir) {
-            Ok(entries) => entries.filter_map(|e| e.ok()).filter_map(|dent| WasmPlugin::new(&dent.path())).map(Arc::new).collect(),
-            Err(e) => {
-                error!(?e, "Can't read plugin dir");
-                vec![]
-            }
-        };
+    pub fn new(plugin_dir: Option<&str>) -> Self {
+        let mut ps = vec![];
+
+        if let Some(plugin_dir) = plugin_dir {
+            // notify doesn't seem to have a mode where it emits Create events for existing files, so we read the dir here.
+            info!(plugin_dir, "Loading initial plugins");
+            ps.extend(match fs::read_dir(plugin_dir) {
+                Ok(entries) => entries.filter_map(|e| e.ok()).filter_map(|dent| WasmPlugin::new(&dent.path())).map(Arc::new).collect(),
+                Err(e) => {
+                    error!(?e, "Can't read plugin dir");
+                    vec![]
+                }
+            });
+        }
 
         Self {
-            dir: plugin_dir.to_owned(),
+            dir: plugin_dir.map(str::to_owned),
             ps: Arc::new(RwLock::new(ps)),
         }
     }
 
     pub async fn watch(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
-        let plugin_dir = Path::new(&self.dir).canonicalize().unwrap();
-        info!(?plugin_dir, "Plugin manager watching");
-        let this = self.clone(); // give closure its own copy, cause it runs on a background thread so can't reason about lifetimes
+        if let Some(ref dir) = self.dir {
+            let plugin_dir = Path::new(dir).canonicalize().unwrap();
+            info!(?plugin_dir, "Plugin manager watching");
+            let this = self.clone(); // give closure its own copy, cause it runs on a background thread so can't reason about lifetimes
 
-        let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| match result {
-            Err(errors) => errors.iter().for_each(|error| error!(?error, "directory watch")),
-            Ok(events) => {
-                debug!(?events, "directory watch");
-                // TODO: handle deletes etc
-                this.ps.write().unwrap().extend(
-                    events
-                        .into_iter()
-                        .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
-                        .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path)).map(Arc::new)),
-                );
-            }
-        })
-        .unwrap();
-        debouncer.watcher().watch(&plugin_dir, RecursiveMode::NonRecursive).unwrap();
-        debouncer.cache().add_root(plugin_dir, RecursiveMode::NonRecursive);
+            let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| match result {
+                Err(errors) => errors.iter().for_each(|error| error!(?error, "directory watch")),
+                Ok(events) => {
+                    debug!(?events, "directory watch");
+                    // TODO: handle deletes etc
+                    this.ps.write().unwrap().extend(
+                        events
+                            .into_iter()
+                            .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
+                            .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path)).map(Arc::new)),
+                    );
+                }
+            })
+            .unwrap();
+            debouncer.watcher().watch(&plugin_dir, RecursiveMode::NonRecursive).unwrap();
+            debouncer.cache().add_root(plugin_dir, RecursiveMode::NonRecursive);
+        }
 
         // debouncer stops on drop (kills its bg thread) on drop
         subsys.on_shutdown_requested().await;

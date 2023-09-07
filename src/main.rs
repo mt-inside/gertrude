@@ -37,10 +37,7 @@ pub struct Args {
     #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
     http_addr: String,
     #[arg(long)]
-    // TODO: make plugins optional again. What we really want is a nullipotent object for a None.
-    // Have plugins::new() return one of two types, as an impl trait object? Or actually do
-    // http://cliffle.com/blog/rust-typestate/
-    plugin_dir: String,
+    plugin_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -54,7 +51,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     let metrics = metrics::Metrics::new();
-    let plugins = plugins::WasmPlugins::new(&args.plugin_dir);
+    let plugins = plugins::WasmPlugins::new(args.plugin_dir.as_deref());
     let karma = karma::Karma::new(metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
     let adm = admin::Admin::new(karma.clone(), plugins.clone());
