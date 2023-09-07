@@ -41,8 +41,7 @@ pub enum WasmError {
 #[derive(Clone)]
 pub struct WasmPlugins {
     dir: Option<String>,
-    // TODO: can remove inner Arc?
-    pub ps: Arc<RwLock<Vec<Arc<WasmPlugin>>>>,
+    pub ps: Arc<RwLock<Vec<WasmPlugin>>>,
 }
 
 impl WasmPlugins {
@@ -53,7 +52,7 @@ impl WasmPlugins {
             // notify doesn't seem to have a mode where it emits Create events for existing files, so we read the dir here.
             info!(plugin_dir, "Loading initial plugins");
             ps.extend(match fs::read_dir(plugin_dir) {
-                Ok(entries) => entries.filter_map(|e| e.ok()).filter_map(|dent| WasmPlugin::new(&dent.path())).map(Arc::new).collect(),
+                Ok(entries) => entries.filter_map(|e| e.ok()).filter_map(|dent| WasmPlugin::new(&dent.path())).collect(),
                 Err(e) => {
                     error!(?e, "Can't read plugin dir");
                     vec![]
@@ -82,7 +81,7 @@ impl WasmPlugins {
                         events
                             .into_iter()
                             .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
-                            .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path)).map(Arc::new)),
+                            .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path))),
                     );
                 }
             })
