@@ -1,7 +1,8 @@
 /* TODO
- * - plugin arch using WASM. Plugins for
+ * - Plugins for
  *   - stock price
  *   - recording every spotify link send, with sender
+ *   - bbc news article titles
  */
 
 #![feature(path_file_prefix)]

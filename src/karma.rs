@@ -11,7 +11,7 @@ use crate::metrics::Metrics;
 
 // TODO this type should persist to disk on updates, and read from disk when constructed.
 // - just serialize to protos
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Karma {
     k: Arc<RwLock<HashMap<UniCase<String>, i32>>>,
     metrics: Metrics,
@@ -23,20 +23,6 @@ impl Karma {
             k: Arc::new(RwLock::new(HashMap::new())),
             metrics,
         }
-    }
-
-    // TODO: actually impl From or Into (what's the diff?). Or impl Eq<HashMap<_>>
-    #[cfg(test)]
-    pub fn from_map(m: HashMap<UniCase<String>, i32>) -> Self {
-        Self {
-            k: Arc::new(RwLock::new(m)),
-            metrics: Default::default(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn to_map(self) -> HashMap<UniCase<String>, i32> {
-        Arc::try_unwrap(self.k).unwrap().into_inner().unwrap()
     }
 
     pub fn get(&self, term: &str) -> i32 {
@@ -81,5 +67,33 @@ impl fmt::Display for Karma {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let read = self.k.read().unwrap();
         write!(f, "{:?}", read)
+    }
+}
+
+#[cfg(test)]
+impl From<HashMap<&str, i32>> for Karma {
+    fn from(m: HashMap<&str, i32>) -> Self {
+        Self {
+            k: Arc::new(RwLock::new(m.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)).collect())),
+            metrics: Default::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<HashMap<&str, i32>> for Karma {
+    // Checks that the set of keys is identical, and that their values match
+    fn eq(&self, m: &HashMap<&str, i32>) -> bool {
+        let k = self.k.read().expect("deadlock");
+
+        let k_covers_m = m.iter().fold(true, |acc, (k1, v1)| {
+            acc && match k.get(&UniCase::new(k1.to_owned().to_owned())) {
+                None => false,
+                Some(v2) => v1 == v2,
+            }
+        });
+        let m_covers_k = k.iter().fold(true, |acc, (k1, _)| acc && m.get(k1.as_str()).is_some());
+
+        k_covers_m && m_covers_k
     }
 }

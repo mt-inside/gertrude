@@ -163,24 +163,18 @@ mod tests {
 
     use super::*;
 
-    fn fix_map_types(m: HashMap<&str, i32>) -> HashMap<UniCase<String>, i32> {
-        let mut exp = HashMap::new();
-        exp.extend(m.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)));
-        exp
-    }
-
     #[test]
     fn test_parse_chat() {
         let cases = [
             ("", hashmap![]),
             ("no votes", hashmap![]),
             ("--", hashmap![]),
-            ("bacon++", hashmap!["bacon"=> 1]),
-            ("bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
-            ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon"=>1]),
+            ("bacon++", hashmap!["bacon" => 1]),
+            ("bacon++. Oh dear emacs crashed", hashmap!["bacon" => 1]),
+            ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon" => 1]),
             (
                 "Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
-                hashmap!["bacon"=>2, "mt" => 1, "bb" =>-1],
+                hashmap!["bacon" => 2, "mt" => 1, "bb" => -1],
             ),
             ("blɸwback++", hashmap!["blɸwback"=> 1]),
             ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
@@ -191,19 +185,18 @@ mod tests {
             let k = Karma::new(Metrics::new());
             let res = parse_chat(case.0, &k);
             assert!(res.is_ok(), "parse failed");
-            let m = k.to_map();
-            assert_eq!(m, fix_map_types(case.1));
+            assert_eq!(k, case.1);
         }
     }
 
     #[test]
     fn test_parse_dm_karma() {
-        // TODO: call karma::from_map / From / Into
-        let k = Karma::new(Metrics::new());
-        k.set("bacon", 1);
-        k.set("blɸwback", -1);
-        k.set("rust", 666);
-        k.set("LISP", -666);
+        let k = Karma::from(hashmap![
+            "bacon"=> 1,
+            "blɸwback"=> -1,
+            "rust"=> 666,
+            "LISP" => -666,
+        ]);
         let k_rendered = format!("{}", k);
 
         let cases = [

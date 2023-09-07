@@ -3,7 +3,7 @@ use prometheus::{register_counter_vec_with_registry, register_gauge_vec_with_reg
 
 use super::http_srv::SrvData;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Metrics {
     reg: Registry,
     pub karma: GaugeVec,
