@@ -37,7 +37,10 @@ pub struct Args {
     #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
     http_addr: String,
     #[arg(long)]
-    plugin_dir: Option<String>,
+    // TODO: make plugins optional again. What we really want is a nullipotent object for a None.
+    // Have plugins::new() return one of two types, as an impl trait object? Or actually do
+    // http://cliffle.com/blog/rust-typestate/
+    plugin_dir: String,
 }
 
 #[tokio::main]
@@ -51,7 +54,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     let metrics = metrics::Metrics::new();
-    let plugins = plugins::WasmPlugins::new(args.plugin_dir.as_deref());
+    let plugins = plugins::WasmPlugins::new(&args.plugin_dir);
     let karma = karma::Karma::new(metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
     let adm = admin::Admin::new(karma.clone(), plugins.clone());
@@ -61,6 +64,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
         .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
         .start("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys))
+        .start("plugin_manager", move |subsys: SubsystemHandle| plugins.watch(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await

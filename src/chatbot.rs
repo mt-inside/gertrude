@@ -72,7 +72,9 @@ impl Chatbot {
                             for res in self.plugins.handle_privmsg(text) {
                                 match res {
                                     Ok(output) => client.send_privmsg(message.response_target().unwrap(), output)?,
-                                    Err(e) => error!(?e, "WASM"), // TODO also send to channel
+                                    Err(e) => error!(?e, "WASM"), // TODO also send to channel eg
+                                                                  // "plugins error <plugin name>
+                                                                  // ..."
                                 }
                             }
                         }

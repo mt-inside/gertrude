@@ -83,18 +83,20 @@ impl PluginsService for PluginsSrv {
     async fn list(&self, request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
         debug!(?request, "Got plugins list request");
 
-        self.ps.ps.iter().for_each(|p| info!(?p.path, p.size, "Plugin"));
+        self.ps.ps.read().unwrap().iter().for_each(|p| info!(?p.path, p.size, "Plugin"));
 
         Ok(Response::new(ListResponse {
             plugins: self
                 .ps
                 .ps
+                .read()
+                .unwrap()
                 .iter()
                 .map(|p| PluginInfo {
-                    // TODO: make optional in the proto
                     name: p.path.file_prefix().map(|p| p.to_string_lossy().to_string()).unwrap_or("<unknown>".to_owned()),
                     path: p.path.to_string_lossy().to_string(),
                     size: p.size.unwrap_or(0),
+                    loaded_time: Some(p.loaded_time.into()),
                 })
                 .collect(),
         }))
