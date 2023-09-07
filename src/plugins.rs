@@ -97,7 +97,9 @@ impl WasmPlugins {
         Ok(())
     }
 
+    // This class and method iterate the plugins because we might want to do fancy stuff like run them in parallel
     pub fn handle_privmsg(&self, msg: &str) -> Vec<Result<String, WasmError>> {
+        // TODO: when they do network i/o, run in parallel
         self.ps
             .read()
             .unwrap()

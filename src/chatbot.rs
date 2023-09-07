@@ -59,22 +59,32 @@ impl Chatbot {
 
                             self.metrics.dms.with_label_values(&[from, to]).inc();
 
-                            let resp = parse_dm(dm, &self.karma);
-
-                            debug!(target = to, "Sending response");
-                            client.send_privmsg(to, resp)?;
+                            let res = parse_dm(dm, &self.karma);
+                            match res {
+                                Ok(resp) => {
+                                    debug!(target = to, "Sending response");
+                                    client.send_privmsg(to, resp)?;
+                                },
+                                Err(e) => {
+                                    error!(?e, "Error parsing DM");
+                                    client.send_privmsg(to, "unknown command / args")?;
+                                },
+                            }
                         } else {
-                            // TODO: error handling, but can't just ? it up because that (exceptionally) returns text, which doesn't live long enough
-                             let res = parse_chat(text, &self.karma);
-                             debug!(?res, "Chat parsing result");
+                            let to = message.response_target().unwrap();
+
+                            let res = parse_chat(text, &self.karma);
+                            match res {
+                                Ok(rest) => debug!(rest=rest.0, "Chat parsed ok"),
+                                Err(e) => error!(?e, "Error parsing chat"),
+                            }
 
                             // See if any of the plugins want to say anything
                             for res in self.plugins.handle_privmsg(text) {
                                 match res {
-                                    Ok(output) => client.send_privmsg(message.response_target().unwrap(), output)?,
-                                    Err(e) => error!(?e, "WASM"), // TODO also send to channel eg
-                                                                  // "plugins error <plugin name>
-                                                                  // ..."
+                                    Ok(output) => client.send_privmsg(to, output)?,
+                                    // TODO: don't iterate the plugins here, but make sure the errors contain plugin name etc
+                                    Err(e) => error!(?e, "Plugin error"),
                                 }
                             }
                         }
@@ -135,23 +145,19 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
     }
 }
 
-fn parse_dm(text: &str, karma: &Karma) -> String {
+fn parse_dm<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::error::Error<&'a str>>> {
     let mut p_karma = tuple((tag("karma"), opt(space1::<&str, nom::error::Error<&str>>), opt(alphanumeric1)));
 
-    if let Ok((_rest, (_, _, arg))) = p_karma(text) {
-        match arg {
-            None => {
-                info!("Command: karma all");
-                format!("{}", karma)
-            }
-            Some(token) => {
-                info!(token, "Command: karma");
-                format!("{}", karma.get(token))
-            }
+    p_karma(text).map(|(_rest, (_, _, arg))| match arg {
+        None => {
+            info!("Command: karma all");
+            format!("{}", karma)
         }
-    } else {
-        "unknown command / args".to_owned()
-    }
+        Some(token) => {
+            info!(token, "Command: karma");
+            format!("{}", karma.get(token))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -205,8 +211,9 @@ mod tests {
         ];
 
         for case in cases {
-            let resp = parse_dm(case.0, &k);
-            assert_eq!(resp, case.1);
+            let res = parse_dm(case.0, &k);
+            assert!(res.is_ok(), "parse failed");
+            assert_eq!(res.unwrap(), case.1);
         }
     }
 
