@@ -1,4 +1,5 @@
 /* TODO
+ * - optinoally run an ident server, attesting to who she is - doesn't seem relevant any more? Can't even see the ~ in irssi
  * - Plugins for
  *   - stock price
  *   - recording every spotify link send, with sender

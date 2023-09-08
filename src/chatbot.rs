@@ -2,10 +2,9 @@ use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
     bytes::complete::{tag, take_till, take_till1, take_while1},
-    combinator::opt,
+    combinator::{eof, opt},
     multi::fold_many0,
-    sequence::{delimited, terminated, tuple},
-    IResult,
+    sequence::{delimited, preceded, terminated, tuple},
 };
 use nom_unicode::{
     complete::{alphanumeric1, space1},
@@ -75,7 +74,7 @@ impl Chatbot {
 
                             let res = parse_chat(text, &self.karma);
                             match res {
-                                Ok(rest) => debug!(rest=rest.0, "Chat parsed ok"),
+                                Ok(_) => debug!("Chat parsed ok"),
                                 Err(e) => error!(?e, "Error parsing chat"),
                             }
 
@@ -113,7 +112,29 @@ fn is_alnumvote(c: char) -> bool {
     is_alphanumeric(c) || c == '+' || c == '-'
 }
 
-fn parse_chat<'a>(text: &'a str, karma: &Karma) -> IResult<&'a str, ()> {
+// /me -> current channel -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("#ant.org", "\u{1}ACTION lol\u{1}") }
+// [ignore] /describe -> specific user -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("gertrude", "\u{1}ACTION lol\u{1}") }
+// TODO: get rid of all the type annotations by typing the parser bindings as IResult?
+fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::error::Error<&'a str>>> {
+    let mut action = delimited(
+        nom::character::complete::char::<&str, nom::error::Error<&str>>('\x01'),
+        preceded(tag("ACTION "), take_till(|c| c == '\x01')), // even if you just issue "/me", there's still a space after ACTION
+        nom::character::complete::char('\x01'),
+    );
+    let mut hug = tuple((tag("hugs"), space1::<&str, nom::error::Error<&str>>, alphanumeric1, eof));
+
+    if let Ok((_, cmd)) = action(text) {
+        debug!(cmd, "ACTION");
+        if let Ok((rest, (_, _, term, _))) = hug(cmd) {
+            if rest.is_empty() {
+                // only one-word terms for now
+                debug!(term, "Hug");
+                karma.bias(term, 1);
+                return Ok("".to_owned());
+            }
+        }
+    }
+
     let words = delimited(take_till(is_alphanumeric), take_while1(is_alnumvote), take_till(is_alphanumeric));
     let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
     let mut downvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("--")));
@@ -128,7 +149,7 @@ fn parse_chat<'a>(text: &'a str, karma: &Karma) -> IResult<&'a str, ()> {
             }
         },
     );
-    parser(text)
+    parser(text).map(|_| "".to_owned())
 }
 
 fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {

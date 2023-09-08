@@ -127,6 +127,7 @@ impl WasmPlugin {
                     let mut store = Store::default();
                     match Module::from_file(&store, path) {
                         Ok(module) => {
+                            // TODO: give them a host fn that takes URI and headers map, and gives string? json?
                             let mut imports = imports! {};
                             match plugin::Plugin::instantiate(&mut store, &module, &mut imports) {
                                 Ok((p, _instance)) => {
