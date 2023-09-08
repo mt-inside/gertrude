@@ -68,26 +68,32 @@ impl WasmPlugins {
 
     pub async fn watch(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
         if let Some(ref dir) = self.dir {
-            let plugin_dir = Path::new(dir).canonicalize().unwrap();
-            info!(?plugin_dir, "Plugin manager watching");
-            let this = self.clone(); // give closure its own copy, cause it runs on a background thread so can't reason about lifetimes
+            match Path::new(dir).canonicalize() {
+                Ok(ref plugin_dir) => {
+                    info!(?plugin_dir, "Plugin manager watching");
 
-            let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| match result {
-                Err(errors) => errors.iter().for_each(|error| error!(?error, "directory watch")),
-                Ok(events) => {
-                    debug!(?events, "directory watch");
-                    // TODO: handle deletes etc
-                    this.ps.write().unwrap().extend(
-                        events
-                            .into_iter()
-                            .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
-                            .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path))),
-                    );
+                    let this = self.clone(); // give closure its own copy, cause it runs on a background thread so can't reason about lifetimes
+
+                    let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| match result {
+                        Err(errors) => errors.iter().for_each(|error| error!(?error, "directory watch")),
+                        Ok(events) => {
+                            debug!(?events, "directory watch");
+                            // TODO: handle deletes etc
+                            this.ps.write().unwrap().extend(
+                                events
+                                    .into_iter()
+                                    .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
+                                    .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path))),
+                            );
+                        }
+                    })
+                    .unwrap();
+
+                    debouncer.watcher().watch(plugin_dir, RecursiveMode::NonRecursive).unwrap();
+                    debouncer.cache().add_root(plugin_dir, RecursiveMode::NonRecursive);
                 }
-            })
-            .unwrap();
-            debouncer.watcher().watch(&plugin_dir, RecursiveMode::NonRecursive).unwrap();
-            debouncer.cache().add_root(plugin_dir, RecursiveMode::NonRecursive);
+                Err(e) => error!(?e, "Can't watch plugin dir"),
+            }
         }
 
         // debouncer stops on drop (kills its bg thread) on drop
