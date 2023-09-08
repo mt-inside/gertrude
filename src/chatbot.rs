@@ -1,8 +1,9 @@
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
+    branch::alt,
     bytes::complete::{tag, take_till, take_till1, take_while1},
-    combinator::{eof, opt},
+    combinator::{eof, opt, value},
     multi::fold_many0,
     sequence::{delimited, preceded, terminated, tuple},
 };
@@ -112,24 +113,23 @@ fn is_alnumvote(c: char) -> bool {
     is_alphanumeric(c) || c == '+' || c == '-'
 }
 
-// /me -> current channel -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("#ant.org", "\u{1}ACTION lol\u{1}") }
-// [ignore] /describe -> specific user -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("gertrude", "\u{1}ACTION lol\u{1}") }
-// TODO: get rid of all the type annotations by typing the parser bindings as IResult?
 fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::error::Error<&'a str>>> {
+    //          /me       -> current channel -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("#ant.org", "\u{1}ACTION lol\u{1}") }
+    // [ignore] /describe -> specific user   -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("gertrude", "\u{1}ACTION lol\u{1}") }
     let mut action = delimited(
         nom::character::complete::char::<&str, nom::error::Error<&str>>('\x01'),
         preceded(tag("ACTION "), take_till(|c| c == '\x01')), // even if you just issue "/me", there's still a space after ACTION
         nom::character::complete::char('\x01'),
     );
-    let mut hug = tuple((tag("hugs"), space1::<&str, nom::error::Error<&str>>, alphanumeric1, eof));
+    let mut karmic = tuple((alt((value(1, tag("hugs")), value(-1, tag("slaps")))), space1::<&str, nom::error::Error<&str>>, alphanumeric1, eof));
 
     if let Ok((_, cmd)) = action(text) {
         debug!(cmd, "ACTION");
-        if let Ok((rest, (_, _, term, _))) = hug(cmd) {
+        if let Ok((rest, (bias, _, term, _))) = karmic(cmd) {
+            // only one-word terms for now
             if rest.is_empty() {
-                // only one-word terms for now
-                debug!(term, "Hug");
-                karma.bias(term, 1);
+                debug!(bias, term, "Karmic action");
+                karma.bias(term, bias);
                 return Ok("".to_owned());
             }
         }
