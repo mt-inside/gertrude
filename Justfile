@@ -14,8 +14,13 @@ MELANGE := "melange"
 APKO    := "apko"
 
 tools-install:
+	rustup component add rustfmt
+	rustup component add clippy
 	rustup component add llvm-tools-preview
 	cargo install grcov
+
+tools-install-apt:
+	apt install -y protobuf-compiler
 
 lint:
 	cargo fmt --all
