@@ -98,7 +98,7 @@ impl WasmPlugins {
 
         // debouncer stops on drop (kills its bg thread) on drop
         subsys.on_shutdown_requested().await;
-        info!("Bot task got shutdown request");
+        info!("Plugins manager task got shutdown request");
 
         Ok(())
     }

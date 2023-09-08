@@ -98,7 +98,7 @@ impl Chatbot {
                     }
                 },
                 _ = subsys.on_shutdown_requested() => {
-                    info!("Bot task got shutdown request");
+                    info!("Chatbot task got shutdown request");
                     client.send_privmsg(self.args.channel, "Killed!")?;
                     break
                 },
