@@ -2,10 +2,11 @@ use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_till1, take_while1},
+    bytes::complete::{tag, take_till, take_till1},
     combinator::{eof, opt, value},
     multi::fold_many0,
-    sequence::{delimited, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, tuple},
+    IResult,
 };
 use nom_unicode::{
     complete::{alphanumeric1, space1},
@@ -109,8 +110,12 @@ impl Chatbot {
     }
 }
 
-fn is_alnumvote(c: char) -> bool {
-    is_alphanumeric(c) || c == '+' || c == '-'
+fn word<'a>() -> impl FnMut(&'a str) -> IResult<&'a str, &'a str, nom::error::Error<&'a str>> {
+    alt((delimited(tag("\""), take_till(|c| c == '"'), tag("\"")), alphanumeric1))
+}
+
+fn is_word_char(c: char) -> bool {
+    is_alphanumeric(c) || c == '"' || c == '+' || c == '-'
 }
 
 fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::error::Error<&'a str>>> {
@@ -121,10 +126,12 @@ fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::
         preceded(tag("ACTION "), take_till(|c| c == '\x01')), // even if you just issue "/me", there's still a space after ACTION
         nom::character::complete::char('\x01'),
     );
-    let mut karmic = tuple((alt((value(1, tag("hugs")), value(-1, tag("slaps")))), space1::<&str, nom::error::Error<&str>>, alphanumeric1, eof));
+    let mut karmic = tuple((alt((value(1, tag("hugs")), value(-1, tag("slaps")))), space1::<&str, nom::error::Error<&str>>, word(), eof));
 
+    trace!(res = ?action(text), "action parser");
     if let Ok((_, cmd)) = action(text) {
         debug!(cmd, "ACTION");
+        trace!(res = ?karmic(text), "karmic parser");
         if let Ok((rest, (bias, _, term, _))) = karmic(cmd) {
             // only one-word terms for now
             if rest.is_empty() {
@@ -135,18 +142,15 @@ fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::
         }
     }
 
-    let words = delimited(take_till(is_alphanumeric), take_while1(is_alnumvote), take_till(is_alphanumeric));
-    let mut upvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("++")));
-    let mut downvote = opt(terminated(alphanumeric1::<&str, nom::error::Error<&str>>, tag("--")));
+    // TODO: return hashmap to bias with
+    let mut words = delimited(take_till(is_word_char), pair(word(), opt(alt((value(1, tag("++")), value(-1, tag("--")))))), take_till(is_word_char));
+    trace!(res = ?words(text), "words parser (invocation 1)");
+    // TODO: still think this should be a many0
     let mut parser = fold_many0(
         words,
         || (),
-        |(), item| {
-            if let Ok((_, Some(term))) = upvote(item) {
-                karma.bias(term, 1);
-            } else if let Ok((_, Some(term))) = downvote(item) {
-                karma.bias(term, -1);
-            }
+        |(), (term, bias)| {
+            bias.map(|b| karma.bias(term, b));
         },
     );
     parser(text).map(|_| "".to_owned())
@@ -167,7 +171,7 @@ fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
 }
 
 fn parse_dm<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::error::Error<&'a str>>> {
-    let mut p_karma = tuple((tag("karma"), opt(space1::<&str, nom::error::Error<&str>>), opt(alphanumeric1)));
+    let mut p_karma = tuple((tag("karma"), opt(space1::<&str, nom::error::Error<&str>>), opt(word())));
 
     p_karma(text).map(|(_rest, (_, _, arg))| match arg {
         None => {
@@ -185,6 +189,7 @@ fn parse_dm<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::er
 mod tests {
     use maplit::hashmap;
 
+    //use tracing_test::traced_test;
     use super::*;
 
     #[test]
@@ -200,9 +205,13 @@ mod tests {
                 "Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
                 hashmap!["bacon" => 2, "mt" => 1, "bb" => -1],
             ),
-            ("blɸwback++", hashmap!["blɸwback"=> 1]),
+            ("blɸwback++", hashmap!["blɸwback" => 1]),
             ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
             ("💩++", hashmap![]),     // emoji aren't alphanumeric. Need a printable-non-space
+            ("\"foo bar\"++", hashmap!["foo bar" => 1]),
+            ("foo \"foo bar\"++ bar", hashmap!["foo bar" => 1]),
+            ("foo++ \"foo bar\"++ bar++", hashmap!["foo bar" => 1, "foo" => 1, "bar" => 1]),
+            ("\"💩\"++", hashmap!["💩" => 1]), // emoji aren't alphanumeric. Need a printable-non-space
         ];
 
         for case in cases {
