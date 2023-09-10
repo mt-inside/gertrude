@@ -32,33 +32,41 @@ impl Karma {
     }
 
     pub fn set(&self, term: &str, new: i32) -> i32 {
+        let term = UniCase::new(term.to_owned());
         let mut write = self.k.write().unwrap();
-        let cur = write.entry(UniCase::new(term.to_owned())).or_insert(0);
+        let cur = write.entry(term.clone()).or_insert(0);
         let old = *cur;
         *cur = new;
         drop(write);
 
-        self.publish(term, new);
+        self.publish(&term, &new);
 
         old
     }
 
-    pub fn bias(&self, term: &str, diff: i32) -> i32 {
+    // TODO: should either take &str, or UniCase<String>. Define one map of each, everything should
+    // be one or the other. UniCase should be confined to Karma (as an impl detail) - might need
+    // Map<String,i32> in some places case &str is annoying
+    // TODO: doc this ^^ ie UniCase doesn't leak here. Hence bulk methods take a Vec cause for a hashmap you have to take decisions around combining keys, which are the concern of this file
+    // TODO: terms will take on the first case seen. Would be much easier to just to_lower() user input... (keep it in this file though, as that's a business decision for karma tracking)
+    // TODO: re-write from to bias_from an empty map
+    pub fn bias_from(&self, biases: Vec<(&str, i32)>) {
         let mut write = self.k.write().unwrap();
-        let cur = write.entry(UniCase::new(term.to_owned())).or_insert(0);
-        *cur += diff;
-        let new = *cur;
-        drop(write);
-
-        self.publish(term, new);
-
-        new
+        let bs = biases.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)).fold(HashMap::new(), |mut acc, (k, v)| {
+            let cur = acc.entry(k).or_insert(0);
+            *cur += v;
+            acc
+        });
+        for (k, v) in &bs {
+            self.publish(k, v);
+        }
+        write.extend(bs);
     }
 
-    fn publish(&self, term: &str, val: i32) {
+    fn publish(&self, term: &UniCase<String>, val: &i32) {
         info!(%self, "Karma");
 
-        self.metrics.karma.with_label_values(&[term]).set(val as f64);
+        self.metrics.karma.with_label_values(&[&term]).set(*val as f64);
     }
 }
 

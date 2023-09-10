@@ -4,7 +4,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_till1},
     combinator::{eof, opt, value},
-    multi::fold_many0,
+    multi::many0,
     sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
@@ -74,9 +74,11 @@ impl Chatbot {
                         } else {
                             let to = message.response_target().unwrap();
 
-                            let res = parse_chat(text, &self.karma);
+                            let res = parse_chat(text);
                             match res {
-                                Ok(_) => debug!("Chat parsed ok"),
+                                Ok(biases) => { debug!("Chat parsed ok");
+                                    self.karma.bias_from(biases);
+                                },
                                 Err(e) => error!(?e, "Error parsing chat"),
                             }
 
@@ -118,7 +120,7 @@ fn is_word_char(c: char) -> bool {
     is_alphanumeric(c) || c == '"' || c == '+' || c == '-'
 }
 
-fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::error::Error<&'a str>>> {
+fn parse_chat(text: &str) -> Result<Vec<(&str, i32)>, nom::Err<nom::error::Error<&str>>> {
     //          /me       -> current channel -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("#ant.org", "\u{1}ACTION lol\u{1}") }
     // [ignore] /describe -> specific user   -> Message { tags: None, prefix: Some(Nickname("empty", _, _)), command: PRIVMSG("gertrude", "\u{1}ACTION lol\u{1}") }
     let mut action = delimited(
@@ -136,24 +138,16 @@ fn parse_chat<'a>(text: &'a str, karma: &Karma) -> Result<String, nom::Err<nom::
             // only one-word terms for now
             if rest.is_empty() {
                 debug!(bias, term, "Karmic action");
-                karma.bias(term, bias);
-                return Ok("".to_owned());
+                return Ok(vec![(term, bias)]);
             }
         }
     }
 
-    // TODO: return hashmap to bias with
+    // TODO: try to get this to only return things when the ++/-- tags. Remove the opt, and use match or whatever it is to only return if it matches, but not error.
     let mut words = delimited(take_till(is_word_char), pair(word(), opt(alt((value(1, tag("++")), value(-1, tag("--")))))), take_till(is_word_char));
     trace!(res = ?words(text), "words parser (invocation 1)");
-    // TODO: still think this should be a many0
-    let mut parser = fold_many0(
-        words,
-        || (),
-        |(), (term, bias)| {
-            bias.map(|b| karma.bias(term, b));
-        },
-    );
-    parser(text).map(|_| "".to_owned())
+    let mut parser = many0(words);
+    parser(text).map(|(_rest, vec)| vec.into_iter().filter(|(_, v)| v.is_some()).map(|(k, v)| (k, v.unwrap())).collect())
 }
 
 fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
@@ -195,6 +189,36 @@ mod tests {
     #[test]
     fn test_parse_chat() {
         let cases = [
+            ("", vec![]),
+            ("no votes", vec![]),
+            ("--", vec![]),
+            ("bacon++", vec![("bacon", 1)]),
+            ("bacon++. Oh dear emacs crashed", vec![("bacon", 1)]),
+            ("Drivel about LISP. bacon++. Oh dear emacs crashed", vec![("bacon", 1)]),
+            (
+                "Drivel about LISP. bacon++. Oh dear emacs crashed. Moar bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
+                vec![("bacon", 1), ("bacon", 1), ("mt", 1), ("bb", -1)],
+            ),
+            ("BaCoN++ bAcOn++ bacon++ BACON++", vec![("BaCoN", 1), ("bAcOn", 1), ("bacon", 1), ("BACON", 1)]),
+            ("blɸwback++", vec![("blɸwback", 1)]),
+            ("foo 💩++", vec![]), // emoji aren't alphanumeric. Need a printable-non-space
+            ("💩++", vec![]),     // emoji aren't alphanumeric. Need a printable-non-space
+            ("\"foo bar\"++", vec![("foo bar", 1)]),
+            ("foo \"foo bar\"++ bar", vec![("foo bar", 1)]),
+            ("foo++ \"foo bar\"++ bar++", vec![("foo", 1), ("foo bar", 1), ("bar", 1)]),
+            ("\"💩\"++", vec![("💩", 1)]), // this parser works differently...
+        ];
+
+        for case in cases {
+            let res = parse_chat(case.0);
+            assert!(res.is_ok(), "parse failed");
+            assert_eq!(res.unwrap(), case.1);
+        }
+    }
+
+    #[test]
+    fn test_karma_ingest() {
+        let cases = [
             ("", hashmap![]),
             ("no votes", hashmap![]),
             ("--", hashmap![]),
@@ -202,9 +226,10 @@ mod tests {
             ("bacon++. Oh dear emacs crashed", hashmap!["bacon" => 1]),
             ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon" => 1]),
             (
-                "Drivel about LISP. bacon++. Oh dear emacs crashed. Moat bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
+                "Drivel about LISP. bacon++. Oh dear emacs crashed. Moar bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
                 hashmap!["bacon" => 2, "mt" => 1, "bb" => -1],
             ),
+            ("BaCoN++ bAcOn++ bacon++ BACON++", hashmap!["BaCoN" => 4]),
             ("blɸwback++", hashmap!["blɸwback" => 1]),
             ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
             ("💩++", hashmap![]),     // emoji aren't alphanumeric. Need a printable-non-space
@@ -216,8 +241,9 @@ mod tests {
 
         for case in cases {
             let k = Karma::new(Metrics::new());
-            let res = parse_chat(case.0, &k);
+            let res = parse_chat(case.0);
             assert!(res.is_ok(), "parse failed");
+            k.bias_from(res.unwrap());
             assert_eq!(k, case.1);
         }
     }
