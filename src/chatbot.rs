@@ -143,11 +143,15 @@ fn parse_chat(text: &str) -> Result<Vec<(&str, i32)>, nom::Err<nom::error::Error
         }
     }
 
-    // TODO: try to get this to only return things when the ++/-- tags. Remove the opt, and use match or whatever it is to only return if it matches, but not error.
-    let mut words = delimited(take_till(is_word_char), pair(word(), opt(alt((value(1, tag("++")), value(-1, tag("--")))))), take_till(is_word_char));
+    let mut words = delimited(
+        take_till(is_word_char),
+        alt((pair(word(), alt((value(1, tag("++")), value(-1, tag("--"))))), value(("", 0), word()))),
+        take_till(is_word_char),
+    );
     trace!(res = ?words(text), "words parser (invocation 1)");
     let mut parser = many0(words);
-    parser(text).map(|(_rest, vec)| vec.into_iter().filter(|(_, v)| v.is_some()).map(|(k, v)| (k, v.unwrap())).collect())
+    trace!(res = ?parser(text), "many0 parser");
+    parser(text).map(|(_rest, vec)| vec.into_iter().filter(|(_, n)| n != &0).collect())
 }
 
 fn get_dm<'a>(nick: &str, target: &str, s: &'a str) -> Option<&'a str> {
