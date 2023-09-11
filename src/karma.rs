@@ -1,3 +1,10 @@
+/* Karma
+ * Case-senitivity of map is a business decision, hence all these methods take
+ * a) strings, rather than say UniCase
+ * b) Vec<tuple>, as HashMaps require decisions on key equality.
+ * Hence, UniCase is considered a business decision isolated to this file, thus that type doesn't leak from here
+// TODO: terms will take on the first case seen. Would be much easier to just to_lower() user input... (keep it in this file though, as that's a business decision for karma tracking)
+ */
 use std::{
     collections::HashMap,
     fmt,
@@ -44,12 +51,6 @@ impl Karma {
         old
     }
 
-    // TODO: should either take &str, or UniCase<String>. Define one map of each, everything should
-    // be one or the other. UniCase should be confined to Karma (as an impl detail) - might need
-    // Map<String,i32> in some places case &str is annoying
-    // TODO: doc this ^^ ie UniCase doesn't leak here. Hence bulk methods take a Vec cause for a hashmap you have to take decisions around combining keys, which are the concern of this file
-    // TODO: terms will take on the first case seen. Would be much easier to just to_lower() user input... (keep it in this file though, as that's a business decision for karma tracking)
-    // TODO: re-write from to bias_from an empty map
     pub fn bias_from(&self, biases: Vec<(&str, i32)>) {
         let mut write = self.k.write().unwrap();
         let bs = biases.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)).fold(HashMap::new(), |mut acc, (k, v)| {

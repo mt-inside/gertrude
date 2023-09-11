@@ -223,31 +223,19 @@ mod tests {
     #[test]
     fn test_karma_ingest() {
         let cases = [
-            ("", hashmap![]),
-            ("no votes", hashmap![]),
-            ("--", hashmap![]),
-            ("bacon++", hashmap!["bacon" => 1]),
-            ("bacon++. Oh dear emacs crashed", hashmap!["bacon" => 1]),
-            ("Drivel about LISP. bacon++. Oh dear emacs crashed", hashmap!["bacon" => 1]),
-            (
-                "Drivel about LISP. bacon++. Oh dear emacs crashed. Moar bacon++! This code rocks; mt++. Shame that lazy bb-- didn't do it.",
-                hashmap!["bacon" => 2, "mt" => 1, "bb" => -1],
-            ),
-            ("BaCoN++ bAcOn++ bacon++ BACON++", hashmap!["BaCoN" => 4]),
-            ("blɸwback++", hashmap!["blɸwback" => 1]),
-            ("foo 💩++", hashmap![]), // emoji aren't alphanumeric. Need a printable-non-space
-            ("💩++", hashmap![]),     // emoji aren't alphanumeric. Need a printable-non-space
-            ("\"foo bar\"++", hashmap!["foo bar" => 1]),
-            ("foo \"foo bar\"++ bar", hashmap!["foo bar" => 1]),
-            ("foo++ \"foo bar\"++ bar++", hashmap!["foo bar" => 1, "foo" => 1, "bar" => 1]),
-            ("\"💩\"++", hashmap!["💩" => 1]), // emoji aren't alphanumeric. Need a printable-non-space
+            (vec![], hashmap![]),
+            (vec![("bacon", 1)], hashmap!["bacon" => 1]),
+            (vec![("bacon", 1), ("bacon", 1), ("mt", 1), ("bb", -1)], hashmap!["bacon" => 2, "mt" => 1, "bb" => -1]),
+            (vec![("BaCoN", 1), ("bAcOn", 1), ("bacon", 1), ("BACON", 1)], hashmap!["BaCoN" => 4]),
+            (vec![("blɸwback", 1)], hashmap!["blɸwback" => 1]),
+            (vec![("foo bar", 1)], hashmap!["foo bar" => 1]),
+            (vec![("foo", 1), ("foo bar", 1), ("bar", 1)], hashmap!["foo bar" => 1, "foo" => 1, "bar" => 1]),
+            (vec![("💩", 1)], hashmap!["💩" => 1]),
         ];
 
         for case in cases {
             let k = Karma::new(Metrics::new());
-            let res = parse_chat(case.0);
-            assert!(res.is_ok(), "parse failed");
-            k.bias_from(res.unwrap());
+            k.bias_from(case.0);
             assert_eq!(k, case.1);
         }
     }
