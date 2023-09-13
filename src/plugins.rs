@@ -24,7 +24,7 @@ use wasmer::{imports, Module, Store};
  *   - use `cargo expand` to see what those macros expand to
  * - this is a fork of https://github.com/bytecodealliance/wit-bindgen, who refused to add wasmer as a target
  */
-wai_bindgen_wasmer::import!("api/wasm/plugin.wai");
+wai_bindgen_wasmer::import!("idl/internal/wasm/plugin.wai");
 
 #[derive(Error, Debug)]
 pub enum WasmError {

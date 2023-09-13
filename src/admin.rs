@@ -5,7 +5,7 @@ pub mod admin_proto {
 use admin_proto::{
     karma_service_server::{KarmaService, KarmaServiceServer},
     plugins_service_server::{PluginsService, PluginsServiceServer},
-    ListRequest, ListResponse, PluginInfo, SetRequest, SetResponse,
+    KarmaSetRequest, KarmaSetResponse, PluginInfo, PluginsListRequest, PluginsListResponse,
 };
 use thiserror::Error;
 use tokio_graceful_shutdown::SubsystemHandle;
@@ -59,12 +59,12 @@ impl KarmaSrv {
 }
 #[tonic::async_trait]
 impl KarmaService for KarmaSrv {
-    async fn set(&self, request: Request<SetRequest>) -> Result<Response<SetResponse>, Status> {
+    async fn set(&self, request: Request<KarmaSetRequest>) -> Result<Response<KarmaSetResponse>, Status> {
         debug!(?request, "Got karma set request");
 
         let old = self.k.set(&request.get_ref().term, request.get_ref().value);
 
-        let reply = SetResponse { old_value: old };
+        let reply = KarmaSetResponse { old_value: old };
 
         Ok(Response::new(reply))
     }
@@ -80,12 +80,12 @@ impl PluginsSrv {
 }
 #[tonic::async_trait]
 impl PluginsService for PluginsSrv {
-    async fn list(&self, request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
+    async fn list(&self, request: Request<PluginsListRequest>) -> Result<Response<PluginsListResponse>, Status> {
         debug!(?request, "Got plugins list request");
 
         self.ps.ps.read().unwrap().iter().for_each(|p| info!(?p.path, p.size, "Plugin"));
 
-        Ok(Response::new(ListResponse {
+        Ok(Response::new(PluginsListResponse {
             plugins: self
                 .ps
                 .ps

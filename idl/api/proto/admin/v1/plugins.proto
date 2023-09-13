@@ -4,13 +4,13 @@ package admin.v1;
 import "google/protobuf/timestamp.proto";
 
 service PluginsService {
-  rpc List (ListRequest) returns (ListResponse);
+  rpc List (PluginsListRequest) returns (PluginsListResponse);
 }
 
-message ListRequest {
+message PluginsListRequest {
 }
 
-message ListResponse {
+message PluginsListResponse {
   repeated PluginInfo plugins = 1;
 }
 
