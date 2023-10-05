@@ -25,8 +25,6 @@ use unicase::UniCase;
 
 use crate::metrics::Metrics;
 
-// TODO this type should persist to disk on updates, and read from disk when constructed.
-// - just serialize to protos
 #[derive(Clone, Debug)]
 pub struct Karma {
     k: Arc<RwLock<HashMap<UniCase<String>, i32>>>,
@@ -35,7 +33,12 @@ pub struct Karma {
 }
 
 impl Karma {
-    // TODO Should take non-uni, &str
+    // On ownership of terms, ie do we pass terms in as String or &str:
+    // - most methods borrow the term, even setters. This is because it might only need to look at
+    // the term; it might already be in the map, so it's just comparing to find the entry. If the
+    // entry is new then it will clone the &str to get the one needed copy on the heap.
+    // - new_inner takes owned strings, as we know we'll be keeping all of them, since this object
+    // is new, and the Map can't contain duplicates.
     fn new_inner(k: HashMap<String, i32>, persist_path: Option<PathBuf>, metrics: Metrics) -> Self {
         let ret = Self {
             k: Arc::new(RwLock::new(k.into_iter().map(|(k, v)| (UniCase::new(k), v)).collect())),
