@@ -165,7 +165,7 @@ impl fmt::Display for Karma {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let m = self.k.read().unwrap();
         let mut v: Vec<(&UniCase<String>, &i32)> = m.iter().collect();
-        v.sort_by(|a, b| b.1.cmp(a.1));
+        v.sort_by(|a, b| if b.1.cmp(a.1) == std::cmp::Ordering::Equal { a.0.cmp(b.0) } else { b.1.cmp(a.1) });
         let mut first = true;
         let render = v.iter().fold(String::new(), |mut acc, (k, v)| {
             if first {
@@ -219,10 +219,12 @@ mod tests {
     fn test_display() {
         let k = Karma::from(hashmap![
             "bacon" => 1,
+            "abacon" => 1,
+            "zbacon" => 1,
             "blɸwback" => -1,
             "rust" => 666,
             "LISP" => -666,
         ]);
-        assert_eq!(format!("{}", k), "rust: 666; bacon: 1; blɸwback: -1; LISP: -666");
+        assert_eq!(format!("{}", k), "rust: 666; abacon: 1; bacon: 1; zbacon: 1; blɸwback: -1; LISP: -666");
     }
 }
