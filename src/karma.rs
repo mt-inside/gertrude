@@ -1,9 +1,10 @@
 /* Karma
  * Case-senitivity of map is a business decision, hence all these methods take
  * a) strings, rather than say UniCase
- * b) Vec<tuple>, as HashMaps require decisions on key equality.
+ * b) Vec<tuple>, rather than HashMaps, as that requires a decision on key equality
  * Hence, UniCase is considered a business decision isolated to this file, thus that type doesn't leak from here
-// TODO: terms will take on the first case seen. Would be much easier to just to_lower() user input... (keep it in this file though, as that's a business decision for karma tracking)
+ * This means that the case of something will be the first case it's seen in. This is a deliberate decision, and is why UniCase is used.
+ * The obvious alternative: to_lower() of everthing, wouldn't allow for casing at all; even acronyms would be lower'd
  */
 
 pub mod storage_proto {
