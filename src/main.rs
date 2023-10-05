@@ -8,7 +8,7 @@
  *   - bbc news article titles
  */
 
-// TODO: what and why?
+// Opt in to unstable Path::file_prefix, which is used in admin. Feature annotations have to be in the create root, ie here
 #![feature(path_file_prefix)]
 
 mod admin;
@@ -24,15 +24,11 @@ use tokio_graceful_shutdown::{SubsystemHandle, Toplevel};
 use tracing::*;
 use tracing_subscriber::{filter, prelude::*};
 
-// TODO: use clap;s macros for these
-pub static NAME: &str = env!("CARGO_BIN_NAME"); // has hypens; CARGO_CRATE_NAME for underscores
-pub static VERSION: &str = env!("CARGO_PKG_VERSION");
+pub static NAME: &str = env!("CARGO_BIN_NAME"); // clap only had a macro for crate name
+pub static VERSION: &str = clap::crate_version!();
 
 #[derive(Parser, Clone, Debug, Default)]
-#[command(name = NAME)]
-#[command(author = "Matt Turner")]
-#[command(version = VERSION)]
-#[command(about = format!("botten {}", NAME), long_about = None)]
+#[command(name = NAME, version = VERSION, about, author)] // about and author use default clap::crate_foo!(), which read from Cargo.toml
 pub struct Args {
     /// IRC server to which to connect
     #[arg(short, long)]

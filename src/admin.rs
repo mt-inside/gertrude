@@ -93,6 +93,7 @@ impl PluginsService for PluginsSrv {
                 .unwrap()
                 .iter()
                 .map(|p| PluginInfo {
+                    // TODO: plugins should have to impliment a name function, to avoid this nastyness. Can then also print it when they're loaded. Version too.
                     name: p.path.file_prefix().map(|p| p.to_string_lossy().to_string()).unwrap_or("<unknown>".to_owned()),
                     path: p.path.to_string_lossy().to_string(),
                     size: p.size.unwrap_or(0),
