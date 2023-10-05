@@ -49,7 +49,9 @@ pub struct Args {
     #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
     http_addr: String,
 
-    /// Path to file wither to load and whence to persist karma. Created if non-existant. No persistance if not provided. Path is not canonicalized, file handle not held open.
+    /// Path to file wither to load and whence to persist karma. Created if non-existant. No persistance if not provided. Path is not canonicalized, file handle not held open. Recommended extension is .binpb.
+    ///
+    /// https://protobuf.dev/programming-guides/techniques/#suffixes
     #[arg(long)]
     persist_path: Option<String>,
 

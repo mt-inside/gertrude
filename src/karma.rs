@@ -12,11 +12,9 @@ pub mod storage_proto {
 
 use std::{
     collections::HashMap,
-    fmt,
-    fs::File,
-    io::{Read, Seek, Write},
-    path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    fmt, fs,
+    path::{Path, PathBuf},
+    sync::{Arc, RwLock},
 };
 
 use prost::Message;
@@ -31,16 +29,16 @@ use crate::metrics::Metrics;
 #[derive(Clone, Debug)]
 pub struct Karma {
     k: Arc<RwLock<HashMap<UniCase<String>, i32>>>,
-    persist_file: Option<Arc<Mutex<File>>>,
+    persist_path: Option<PathBuf>,
     metrics: Metrics,
 }
 
 impl Karma {
     // TODO Should take non-uni, &str
-    fn new_inner(k: HashMap<String, i32>, persist_file: Option<File>, metrics: Metrics) -> Self {
+    fn new_inner(k: HashMap<String, i32>, persist_path: Option<PathBuf>, metrics: Metrics) -> Self {
         let ret = Self {
             k: Arc::new(RwLock::new(k.into_iter().map(|(k, v)| (UniCase::new(k), v)).collect())),
-            persist_file: persist_file.map(|f| Arc::new(Mutex::new(f))),
+            persist_path,
             metrics,
         };
         ret.update_metrics();
@@ -53,49 +51,38 @@ impl Karma {
         Self::new_inner(HashMap::new(), None, metrics)
     }
 
-    pub fn from_file(file_name: Option<&str>, metrics: Metrics) -> Self {
+    pub fn from_file(path: Option<&str>, metrics: Metrics) -> Self {
         // TODO: effectful layer? This mod should just deal in byte bufs in and out; some layer/composed object should deal with file I/O
-        // TODO: don't hold the file open. Feels unix-y, but it's not a log file. User wants to have it write once, mv the file, and have it write a new one. Will simplify a lot of this logic (remove mutex from persist_path)
-        // - you also don't actually wanna canonicalise either - let the user work out what the error is. Certainly don't canon and store, cause again the user might wanna insert a symlink in the path at runtime
 
-        fn read_karmae(f: &mut File) -> anyhow::Result<Karmae> {
-            let mut buf = Vec::with_capacity(f.metadata()?.len() as usize);
-            f.read_to_end(&mut buf)?;
-            let k = Karmae::decode(&buf[..])?;
-            Ok(k)
+        // We don't hold the file open. Feels unix-y, but it's not a log file. User wants to have it write once, mv the file, and have it write a new one.
+        // We also don't canonicalise the path on startup either, as that "locks in" any symlink structure they're using
+
+        fn get_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+            path.try_exists().and_then(|e| {
+                if e {
+                    info!(?path, "Loading from file");
+                    fs::read(path)
+                } else {
+                    warn!(?path, "File doesn't exist; will create");
+                    Ok(Vec::new())
+                }
+            })
         }
 
-        // It's fine for this fn to deal with None file_name, as in future eg we might wanna start falling back to ~
-        if let Some(file_name) = file_name {
-            let path = PathBuf::from(file_name);
-            match path.try_exists() {
-                Ok(exists) => {
-                    let res = if exists {
-                        File::options().read(true).write(true).open(&path)
-                    } else {
-                        info!(?path, "File didn't exist; creating");
-                        File::options().read(true).write(true).create_new(true).open(&path)
-                    };
+        // It's fine for this fn to deal with None path, as in future eg we might wanna start falling back to ~
+        if let Some(path) = path {
+            let path = PathBuf::from(path);
 
-                    match res {
-                        Ok(mut file) => match read_karmae(&mut file) {
-                            Ok(k) => {
-                                info!(?path, "Loaded from file");
-                                Self::new_inner(k.values, Some(file), metrics)
-                            }
-                            Err(e) => {
-                                error!(?e, ?path, "Can't deserialize karma from file. Won't persist.");
-                                Self::new_inner(HashMap::new(), None, metrics)
-                            }
-                        },
-                        Err(e) => {
-                            error!(?e, ?path, "Can't open for read & write. Won't persist.");
-                            Self::new_inner(HashMap::new(), None, metrics)
-                        }
+            match get_bytes(&path) {
+                Ok(bytes) => match Karmae::decode(&bytes[..]) {
+                    Ok(k) => Self::new_inner(k.values, Some(path), metrics),
+                    Err(e) => {
+                        error!(?e, ?path, "Can't deserialize karma from file. Won't persist for safety.");
+                        Self::new_inner(HashMap::new(), None, metrics)
                     }
-                }
+                },
                 Err(e) => {
-                    error!(?e, ?path, "Can't determine if file exists. Won't persist.");
+                    error!(?e, ?path, "Can't load karma from file. Thus won't attempt persistance.");
                     Self::new_inner(HashMap::new(), None, metrics)
                 }
             }
@@ -148,23 +135,20 @@ impl Karma {
     }
 
     fn persist(&self) -> anyhow::Result<()> {
-        if let Some(ref file) = self.persist_file {
+        if let Some(ref path) = self.persist_path {
             let read = self.k.read().unwrap();
-            let mut write = file.lock().unwrap();
 
             let ks = Karmae {
                 // TODO make this an into (Karma into karmae)
                 values: (*read).iter().map(|(k, v)| (k.to_owned().to_string(), *v)).collect(),
             };
 
+            // Could use text or json pb encoding formats, as it would then be human readable/editable. Currently the way to "edit" a karma db is to load it into gertie and use the admin interface to set values.
             let mut buf = vec![];
             ks.encode(&mut buf)?;
-            info!(len = buf.len(), "Buf");
 
-            info!("Persisting");
-            (*write).set_len(0)?;
-            (*write).rewind()?;
-            (*write).write_all(&buf)?;
+            debug!("Persisting");
+            fs::write(path, &buf)?; // Creates or truncates
         } else {
             trace!("Not persisting");
         }
@@ -197,7 +181,7 @@ impl From<HashMap<&str, i32>> for Karma {
     fn from(m: HashMap<&str, i32>) -> Self {
         Self {
             k: Arc::new(RwLock::new(m.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)).collect())),
-            persist_file: None,
+            persist_path: None,
             metrics: Default::default(),
         }
     }
