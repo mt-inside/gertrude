@@ -2,6 +2,7 @@
  * - use dyn Trait for plugins
  * - optinoally run an ident server, attesting to who she is - doesn't seem relevant any more? Can't even see the ~ in irssi
  * - Plugins for
+ *   - applying s/ regex to the last message, and printing the result, or "your regex doesn't work, oaf"
  *   - stock price
  *   - recording every spotify link send, with sender
  *   - bbc news article titles
