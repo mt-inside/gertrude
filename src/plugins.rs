@@ -45,6 +45,7 @@ pub struct WasmPlugins {
 }
 
 impl WasmPlugins {
+    // TODO: use dyn Box<Trait> over two types for empty/non-empty
     pub fn new(plugin_dir: Option<&str>) -> Self {
         let mut ps = vec![];
 

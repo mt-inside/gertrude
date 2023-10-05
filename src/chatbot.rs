@@ -48,7 +48,7 @@ impl Chatbot {
         loop {
             tokio::select! {
                 Some(Ok(message)) = stream.next() => {
-                    info!(?message, "received");
+                    debug!(?message, "received");
 
                     if let Command::PRIVMSG(ref recipient, ref text) = message.command {
                         self.metrics.messages.with_label_values(&["privmsg"]).inc();
@@ -223,19 +223,23 @@ mod tests {
     #[test]
     fn test_karma_ingest() {
         let cases = [
-            (vec![], hashmap![]),
-            (vec![("bacon", 1)], hashmap!["bacon" => 1]),
-            (vec![("bacon", 1), ("bacon", 1), ("mt", 1), ("bb", -1)], hashmap!["bacon" => 2, "mt" => 1, "bb" => -1]),
-            (vec![("BaCoN", 1), ("bAcOn", 1), ("bacon", 1), ("BACON", 1)], hashmap!["BaCoN" => 4]),
-            (vec![("blɸwback", 1)], hashmap!["blɸwback" => 1]),
-            (vec![("foo bar", 1)], hashmap!["foo bar" => 1]),
-            (vec![("foo", 1), ("foo bar", 1), ("bar", 1)], hashmap!["foo bar" => 1, "foo" => 1, "bar" => 1]),
-            (vec![("💩", 1)], hashmap!["💩" => 1]),
+            (vec![vec![]], hashmap![]),
+            (vec![vec![("bacon", 1)]], hashmap!["bacon" => 1]),
+            (vec![vec![("bacon", 1), ("bacon", 1), ("mt", 1), ("bb", -1)]], hashmap!["bacon" => 2, "mt" => 1, "bb" => -1]),
+            (vec![vec![("BaCoN", 1), ("bAcOn", 1), ("bacon", 1), ("BACON", 1)]], hashmap!["BaCoN" => 4]),
+            (vec![vec![("blɸwback", 1)]], hashmap!["blɸwback" => 1]),
+            (vec![vec![("foo bar", 1)]], hashmap!["foo bar" => 1]),
+            (vec![vec![("foo", 1), ("foo bar", 1), ("bar", 1)]], hashmap!["foo bar" => 1, "foo" => 1, "bar" => 1]),
+            (vec![vec![("💩", 1)]], hashmap!["💩" => 1]),
+            (vec![vec![("bacon", 1)], vec![("bacon", 1)]], hashmap!["bacon" => 2]),
+            (vec![vec![("bacon", 1)], vec![("bacon", -1)]], hashmap!["bacon" => 0]),
         ];
 
         for case in cases {
             let k = Karma::new(Metrics::new());
-            k.bias_from(case.0);
+            for t in case.0 {
+                k.bias_from(t);
+            }
             assert_eq!(k, case.1);
         }
     }

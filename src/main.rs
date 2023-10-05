@@ -1,4 +1,5 @@
 /* TODO
+ * - use dyn Trait for plugins
  * - optinoally run an ident server, attesting to who she is - doesn't seem relevant any more? Can't even see the ~ in irssi
  * - Plugins for
  *   - stock price
@@ -6,6 +7,7 @@
  *   - bbc news article titles
  */
 
+// TODO: what and why?
 #![feature(path_file_prefix)]
 
 mod admin;
@@ -21,6 +23,7 @@ use tokio_graceful_shutdown::{SubsystemHandle, Toplevel};
 use tracing::*;
 use tracing_subscriber::{filter, prelude::*};
 
+// TODO: use clap;s macros for these
 pub static NAME: &str = env!("CARGO_BIN_NAME"); // has hypens; CARGO_CRATE_NAME for underscores
 pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -30,14 +33,27 @@ pub static VERSION: &str = env!("CARGO_PKG_VERSION");
 #[command(version = VERSION)]
 #[command(about = format!("botten {}", NAME), long_about = None)]
 pub struct Args {
+    /// IRC server to which to connect
     #[arg(short, long)]
     server: String,
+
+    /// Channel to join
     #[arg(short, long)]
     channel: String,
+
+    /// Nickname to use
     #[arg(short, long, default_value_t = NAME.to_owned())]
     nick: String,
+
+    /// Bind address for the HTTP server (metrics, liveness, etc)
     #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
     http_addr: String,
+
+    /// Path to file wither to load and whence to persist karma. Created if non-existant. No persistance if not provided. Path is not canonicalized, file handle not held open.
+    #[arg(long)]
+    persist_path: Option<String>,
+
+    /// Directory to watch for plugins
     #[arg(long)]
     plugin_dir: Option<String>,
 }
@@ -54,7 +70,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let metrics = metrics::Metrics::new();
     let plugins = plugins::WasmPlugins::new(args.plugin_dir.as_deref());
-    let karma = karma::Karma::new(metrics.clone());
+    let karma = karma::Karma::from_file(args.persist_path.as_deref(), metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
     let adm = admin::Admin::new(karma.clone(), plugins.clone());
     let bot = chatbot::Chatbot::new(args.clone(), karma.clone(), plugins.clone(), metrics.clone());
