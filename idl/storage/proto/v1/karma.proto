@@ -1,0 +1,6 @@
+syntax = "proto3";
+package storage.v1;
+
+message Karmae {
+  map<string, int32> values = 1;
+}
