@@ -1,4 +1,4 @@
-use actix_web::{dev::Server, get, middleware, web::Data, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{dev::Server, get, middleware, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use maplit::hashmap;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
@@ -24,7 +24,7 @@ impl HTTPSrv {
     fn server(self) -> Server {
         HttpServer::new(move || {
             App::new()
-                .app_data(Data::new(self.data.clone()))
+                .app_data(actix_web::web::Data::new(self.data.clone()))
                 .wrap(middleware::Logger::default().exclude("/healthz"))
                 .service(handle_health)
                 .service(handle_metrics)

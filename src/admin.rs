@@ -60,7 +60,7 @@ impl KarmaSrv {
 #[tonic::async_trait]
 impl KarmaService for KarmaSrv {
     async fn set(&self, request: Request<KarmaSetRequest>) -> Result<Response<KarmaSetResponse>, Status> {
-        debug!(?request, "Got karma set request");
+        info!(?request, "Got karma set request");
 
         let old = self.k.set(&request.get_ref().term, request.get_ref().value);
 
@@ -81,7 +81,7 @@ impl PluginsSrv {
 #[tonic::async_trait]
 impl PluginsService for PluginsSrv {
     async fn list(&self, request: Request<PluginsListRequest>) -> Result<Response<PluginsListResponse>, Status> {
-        debug!(?request, "Got plugins list request");
+        info!(?request, "Got plugins list request");
 
         self.ps.ps.read().unwrap().iter().for_each(|p| info!(?p.path, p.size, "Plugin"));
 
@@ -93,7 +93,9 @@ impl PluginsService for PluginsSrv {
                 .unwrap()
                 .iter()
                 .map(|p| PluginInfo {
-                    // TODO: plugins should have to impliment a name function, to avoid this nastyness. Can then also print it when they're loaded. Version too.
+                    // TODO: plugins should have to impliment a name function (no, see below), to avoid this nastyness. Can then also print it when they're loaded. Version too.
+                    // - Is this what wasmpack does? YES. builds to wasm, makes JS wrapper files, makes npm package.json. Load plugins this: decompress, read package.json (expect to be npm-compat), filter files list to *.wasm, assert only 1, load. Use name etc from package.json.
+                    // Can make these with wasm-pack: need to set metadata in cargo.toml, then call wasm-pack pack
                     name: p.path.file_prefix().map(|p| p.to_string_lossy().to_string()).unwrap_or("<unknown>".to_owned()),
                     path: p.path.to_string_lossy().to_string(),
                     size: p.size.unwrap_or(0),

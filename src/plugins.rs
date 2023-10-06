@@ -50,6 +50,7 @@ impl WasmPlugins {
         let mut ps = vec![];
 
         if let Some(plugin_dir) = plugin_dir {
+            // TODO: canon path here
             // notify doesn't seem to have a mode where it emits Create events for existing files, so we read the dir here.
             info!(plugin_dir, "Loading initial plugins");
             ps.extend(match fs::read_dir(plugin_dir) {
@@ -80,6 +81,7 @@ impl WasmPlugins {
                         Ok(events) => {
                             debug!(?events, "directory watch");
                             // TODO: handle deletes etc
+                            // TODO: reload when the file changes
                             this.ps.write().unwrap().extend(
                                 events
                                     .into_iter()
@@ -105,13 +107,22 @@ impl WasmPlugins {
     }
 
     // This class and method iterate the plugins because we might want to do fancy stuff like run them in parallel
-    pub fn handle_privmsg(&self, msg: &str) -> Vec<Result<String, WasmError>> {
+    pub fn handle_privmsg(&self, msgs: &[&str]) -> Vec<String> {
         // TODO: when they do network i/o, run in parallel
         self.ps
             .read()
             .unwrap()
             .iter()
-            .map(|p| p.p.handle_privmsg(&mut p.store.lock().unwrap(), msg).map_err(WasmError::Runtime))
+            .filter_map(|p| {
+                debug!("Calling plugin TODO");
+                match p.p.handle_privmsg(&mut p.store.lock().unwrap(), msgs) {
+                    Ok(reply) => reply,
+                    Err(e) => {
+                        warn!(?e, "Plugin TODO error");
+                        None
+                    }
+                }
+            })
             .collect()
     }
 }
@@ -126,6 +137,7 @@ pub struct WasmPlugin {
 
 impl WasmPlugin {
     fn new(path: &PathBuf) -> Option<WasmPlugin> {
+        // TODO attempt to canonicalize path here. Will a) canon it, b) flush out non-existant etc
         if let Some(os_ext) = path.extension() {
             if let Some(ext) = os_ext.to_str() {
                 if ext.to_lowercase() == "wasm" {

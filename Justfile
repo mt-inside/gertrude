@@ -52,7 +52,7 @@ build-ci:
 	cargo build --release
 
 run-freenode: test
-	RUST_BACKTRACE=1 cargo run -- -s chat.freenode.net -c '#test' --persist-path karma.binpb --plugin-dir ${PWD}/../gertrude-spotify/target/wasm32-unknown-unknown/debug/
+	RUST_BACKTRACE=1 cargo run -- -s chat.freenode.net -c '#test' --persist-path karma.binpb --plugin-dir ${PWD}/../gertrude-regex/target/wasm32-unknown-unknown/debug/
 
 package: test
 	rm -rf ./packages/

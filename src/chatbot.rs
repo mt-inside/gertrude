@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use futures::prelude::*;
 use irc::client::prelude::*;
 use nom::{
@@ -44,6 +46,7 @@ impl Chatbot {
         client.identify()?;
 
         let mut stream = client.stream()?;
+        let mut bcast = VecDeque::with_capacity(5); // TODO: configurable, and use next to pop_front too
 
         loop {
             tokio::select! {
@@ -72,24 +75,29 @@ impl Chatbot {
                                 },
                             }
                         } else {
+                            if bcast.len() == 5 { bcast.pop_front(); }
+                            bcast.push_back(text.clone());
+                            bcast.make_contiguous();
+
                             let to = message.response_target().unwrap();
 
                             let res = parse_chat(text);
                             match res {
                                 Ok(biases) => { debug!("Chat parsed ok");
+                                    // TODO: track the number of karma-- alteration++ per message (most will be 0)
                                     self.karma.bias_from(biases);
                                 },
                                 Err(e) => error!(?e, "Error parsing chat"),
                             }
 
                             // See if any of the plugins want to say anything
-                            for res in self.plugins.handle_privmsg(text) {
-                                match res {
-                                    Ok(output) => client.send_privmsg(to, output)?,
-                                    // TODO: don't iterate the plugins here, but make sure the errors contain plugin name etc
-                                    Err(e) => error!(?e, "Plugin error"),
-                                }
-                            }
+                            self.plugins.handle_privmsg(
+                                &bcast.iter()
+                                .map(String::as_str)
+                                .collect::<Vec<&str>>()
+                            ).iter()
+                            .map(|reply| client.send_privmsg(to, reply))
+                            .collect::<Result<Vec<_>,_>>()?;
                         }
 
                     } else if let Command::PING(ref srv1, ref _srv2) = message.command {

@@ -117,6 +117,10 @@ impl Karma {
 
     // Convenience method to do a bulk update from a set of differences
     pub fn bias_from(&self, biases: Vec<(&str, i32)>) {
+        if biases.len() == 0 {
+            return;
+        }
+
         let mut write = self.k.write().unwrap();
         // TODO factor this out. Can't be a from or anything. But have From use it.
         biases.into_iter().map(move |(k, v)| (UniCase::new(k.to_owned()), v)).for_each(|(k, v)| {
