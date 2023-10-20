@@ -19,13 +19,18 @@ environment:
       - build-base
       - pkgconf
       - openssl-dev
-      - rust
+      # Need rustup rather than rust, because we want nightly, and rust package doesn't include rustup toolchain manager
+      # rustup contains rustup-init; indeed they're different invocations of the same binary
+      - rustup
       - protobuf-dev
       - just
       - git
 pipeline:
   - name: Build
     runs: |
+      git config --global --add safe.directory /home/build
+      rustup-init --default-toolchain nightly -y # Calling this as "rustup toolchain install nightly" doesn't make the ~/.cargo links (even after setting default toolchain)
+      source "$HOME/.cargo/env"
       just build-ci
       mkdir -p "${{targets.destdir}}/usr/bin"
       mv "./target/release/gertrude" "${{targets.destdir}}/usr/bin"
