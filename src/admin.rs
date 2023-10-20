@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::*;
 
-use crate::{karma::Karma, plugins::WasmPlugins};
+use crate::{karma::Karma, plugins::Foo};
 
 #[derive(Error, Debug)]
 pub enum AdminError {
@@ -24,10 +24,10 @@ pub enum AdminError {
 
 pub struct Admin {
     k: Karma,
-    ps: WasmPlugins,
+    ps: Foo,
 }
 impl Admin {
-    pub fn new(k: Karma, ps: WasmPlugins) -> Self {
+    pub fn new(k: Karma, ps: Foo) -> Self {
         Self { k, ps }
     }
 
@@ -71,11 +71,11 @@ impl KarmaService for KarmaSrv {
 }
 
 struct PluginsSrv {
-    ps: WasmPlugins,
+    ps_mgr: Foo,
 }
 impl PluginsSrv {
-    fn new(ps: WasmPlugins) -> Self {
-        Self { ps }
+    fn new(ps_mgr: Foo) -> Self {
+        Self { ps_mgr }
     }
 }
 #[tonic::async_trait]
@@ -83,15 +83,12 @@ impl PluginsService for PluginsSrv {
     async fn list(&self, request: Request<PluginsListRequest>) -> Result<Response<PluginsListResponse>, Status> {
         info!(?request, "Got plugins list request");
 
-        self.ps.ps.read().unwrap().iter().for_each(|p| info!(?p.path, p.size, "Plugin"));
-
         Ok(Response::new(PluginsListResponse {
             plugins: self
-                .ps
-                .ps
-                .read()
-                .unwrap()
+                .ps_mgr
+                .get_info()
                 .iter()
+                // TODO: make this an Into / From (whichever would go in this file cause PluginInfo is our type)
                 .map(|p| PluginInfo {
                     // TODO: plugins should have to impliment a name function (no, see below), to avoid this nastyness. Can then also print it when they're loaded. Version too.
                     // - Is this what wasmpack does? YES. builds to wasm, makes JS wrapper files, makes npm package.json. Load plugins this: decompress, read package.json (expect to be npm-compat), filter files list to *.wasm, assert only 1, load. Use name etc from package.json.

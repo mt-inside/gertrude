@@ -18,17 +18,17 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
 
 use super::Args;
-use crate::{karma::Karma, metrics::Metrics, plugins::WasmPlugins};
+use crate::{karma::Karma, metrics::Metrics, plugins::Foo};
 
 pub struct Chatbot {
     args: Args,
     karma: Karma,
-    plugins: WasmPlugins,
+    plugins: Foo,
     metrics: Metrics,
 }
 
 impl Chatbot {
-    pub fn new(args: Args, karma: Karma, plugins: WasmPlugins, metrics: Metrics) -> Self {
+    pub fn new(args: Args, karma: Karma, plugins: Foo, metrics: Metrics) -> Self {
         Self { args, karma, plugins, metrics }
     }
 
@@ -70,7 +70,7 @@ impl Chatbot {
                                     client.send_privmsg(to, resp)?;
                                 },
                                 Err(e) => {
-                                    error!(?e, "Error parsing DM");
+                                    debug!(?e, "Error parsing DM");
                                     client.send_privmsg(to, "unknown command / args")?;
                                 },
                             }

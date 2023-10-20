@@ -68,7 +68,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     let metrics = metrics::Metrics::new();
-    let plugins = plugins::WasmPlugins::new(args.plugin_dir.as_deref());
+    let plugins = plugins::new_manager(args.plugin_dir.as_deref());
     let karma = karma::Karma::from_file(args.persist_path.as_deref(), metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
     let adm = admin::Admin::new(karma.clone(), plugins.clone());
@@ -78,7 +78,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
         .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
         .start("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys))
-        .start("plugin_manager", move |subsys: SubsystemHandle| plugins.watch(subsys))
+        .start("plugin_manager", move |subsys: SubsystemHandle| async move { plugins.watch(subsys) })
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await
