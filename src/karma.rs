@@ -117,7 +117,7 @@ impl Karma {
 
     // Convenience method to do a bulk update from a set of differences
     pub fn bias_from(&self, biases: Vec<(&str, i32)>) {
-        if biases.len() == 0 {
+        if biases.is_empty() {
             return;
         }
 
