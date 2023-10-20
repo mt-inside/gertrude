@@ -18,6 +18,8 @@ tools-install:
 	rustup component add clippy
 	rustup component add llvm-tools-preview
 	cargo install grcov
+tools-install-deb:
+	apt update && apt install protobuf-compiler
 
 tools-install-apt:
 	apt install -y protobuf-compiler
