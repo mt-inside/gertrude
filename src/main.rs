@@ -6,10 +6,13 @@
  *   - stock price
  *   - recording every spotify link send, with sender
  *   - bbc news article titles
+ *   - any link to an image type - run an image classifier over it
  */
 
-// Opt in to unstable Path::file_prefix, which is used in admin. Feature annotations have to be in the create root, ie here
+// Feature annotations have to be in the create root, ie here.
+// Opt in to unstable Path::file_prefix, which is used in admin.
 #![feature(path_file_prefix)]
+//#![feature(async_fn_in_trait)]
 
 mod admin;
 mod chatbot;
