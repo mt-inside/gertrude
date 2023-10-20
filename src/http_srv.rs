@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use actix_web::{dev::Server, get, middleware, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use maplit::hashmap;
 use tokio_graceful_shutdown::SubsystemHandle;
@@ -8,6 +10,7 @@ use super::metrics::{handle_metrics, Metrics};
 #[derive(Clone)]
 pub struct SrvData {
     pub metrics: Metrics,
+    start_time: SystemTime,
 }
 
 pub struct HTTPSrv {
@@ -17,7 +20,10 @@ pub struct HTTPSrv {
 
 impl HTTPSrv {
     pub fn new(addr: String, metrics: Metrics) -> Self {
-        let data = SrvData { metrics: metrics.clone() };
+        let data = SrvData {
+            metrics: metrics.clone(),
+            start_time: SystemTime::now(),
+        };
         Self { addr, data }
     }
 
@@ -56,6 +62,15 @@ impl HTTPSrv {
 }
 
 #[get("/healthz")]
-async fn handle_health(_data: actix_web::web::Data<SrvData>, _req: HttpRequest) -> impl Responder {
-    HttpResponse::Ok().json(hashmap!["health"=> "ok", "name" => crate::NAME, "version" => crate::VERSION])
+async fn handle_health(data: actix_web::web::Data<SrvData>, _req: HttpRequest) -> impl Responder {
+    let start_time_rendered = format!("{:?}", data.start_time);
+    let uptime_rendered = format!("{:?}", SystemTime::now().duration_since(data.start_time));
+
+    HttpResponse::Ok().json(hashmap![
+        "health" => "ok",
+        "name" => crate::NAME,
+        "version" => crate::VERSION,
+        "start_time" => &start_time_rendered,
+        "uptime" => &uptime_rendered,
+    ])
 }
