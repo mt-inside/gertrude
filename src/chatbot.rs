@@ -39,8 +39,12 @@ impl Chatbot {
 
     pub async fn lurk(self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
         let config = Config {
+            // TODO: set owners
             nickname: Some(self.args.nick.clone()),
+            password: self.args.pass.clone(), // Not to be confused with nick_password
+            // TODO: set realname "matt", see what happens. Is this what's currently "~empty"? Where's it getting that from?
             server: Some(self.args.server.clone()),
+            use_tls: Some(true),
             channels: vec![self.args.channel.clone()],
             version: Some(format!("{} {} {}/{}", crate::NAME, crate::VERSION, std::env::consts::OS, std::env::consts::ARCH,)),
             source: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),

@@ -45,6 +45,10 @@ pub struct Args {
     #[arg(short, long, default_value_t = NAME.to_owned())]
     nick: String,
 
+    /// Server password (not NICKSERV password)
+    #[arg(short, long)]
+    pass: Option<String>,
+
     /// Bind address for the HTTP server (metrics, liveness, etc)
     #[arg(long, default_value_t = String::from("127.0.0.1:8080"))]
     http_addr: String,
