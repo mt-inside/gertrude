@@ -5,107 +5,39 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use async_trait::async_trait;
 use notify_debouncer_full::{
     new_debouncer,
     notify::{EventKind, RecursiveMode, Watcher as NotifyWatcher},
     DebounceEventResult,
 };
 use thiserror::Error;
+use tokio::task::JoinSet;
 use tokio_graceful_shutdown::SubsystemHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::*;
 use wasmer::{imports, Module, Store};
 
-trait Watcher {
-    fn initial_load(&self);
-    fn watch(self);
-}
-
-// struct Watchers {
-//     fs: FsWatcher,
-// }
-
-// don't need the syn on the reader, just the watcher
-// new should prlly return Option<watcher> and None for nothing to watch
-// note: we might have >1 source, so ideally new_manager would spawn all the tasks for all the sources
-// - return joinset of watchers? Probably uber-task over them. No dyn, just a manager-manager
-// - watcher-watcher: either one Opt for each type, but you might want FsWatch on >1 dir, so vec of
-// dyn Watcher - no just join handles
-// - trait for watchers (with initial() and watch()) but we don't store them dyn, just join handles
+// TODO: take multiple plugin dirs (and other sources)
 // - builder pattern keeps vecs of paths to watch, urls to poll ,etc
-pub fn new_plugins(plugin_dir: Option<&str>) -> (FsWatcher, Manager) {
-    let mut ps = vec![];
+pub fn new_plugins(plugin_dir: Option<&str>) -> (Watchers, Manager) {
+    let ps = Arc::new(RwLock::new(vec![]));
 
-    let plugin_dir = plugin_dir.unwrap(); // FIXME
+    let mut handles = JoinSet::new();
+    let shutdown = CancellationToken::new();
 
-    // Test me!
-    //     then:
-    // ctor every plugin type based on args, push to vec<dyn Watcher>
-    // pass ps to foo.init() one at a time
-    // call foo.watch() one at a time, save join handles
-
-    //if let Some(plugin_dir) = plugin_dir {
-    // TODO: canon path here
-    // notify doesn't seem to have a mode where it emits Create events for existing files, so we read the dir here.
-    info!(plugin_dir, "Loading initial plugins");
-    ps.extend(match fs::read_dir(plugin_dir) {
-        Ok(entries) => entries.filter_map(|e| e.ok()).filter_map(|dent| WasmPlugin::new(&dent.path())).collect(),
-        Err(e) => {
-            error!(?e, "Can't read plugin dir");
-            vec![]
-        }
-    });
-
-    let ps_wrapped = Arc::new(RwLock::new(ps));
-
-    let fs_watcher = FsWatcher {
-        dir: plugin_dir.to_owned(),
-        ps: ps_wrapped.clone(),
-    };
-
-    (fs_watcher, Manager { ps: ps_wrapped.clone() })
-}
-
-pub struct FsWatcher {
-    dir: String,
-    ps: Arc<RwLock<Vec<WasmPlugin>>>,
-}
-
-impl FsWatcher {
-    pub async fn watch(self, _subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
-        let ps = self.ps.clone(); // give closure its own copy, cause it runs on a background thread so can't reason about lifetimes
-
-        match Path::new(&self.dir).canonicalize() {
-            Ok(ref plugin_dir) => {
-                info!(?plugin_dir, "Plugin manager watching");
-
-                let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| match result {
-                    Err(errors) => errors.iter().for_each(|error| error!(?error, "directory watch")),
-                    Ok(events) => {
-                        debug!(?events, "directory watch");
-                        // TODO: handle deletes etc
-                        // TODO: reload when the file changes
-                        ps.write().unwrap().extend(
-                            events
-                                .into_iter()
-                                .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
-                                .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path))),
-                        );
-                    }
-                })
-                .unwrap();
-
-                debouncer.watcher().watch(plugin_dir, RecursiveMode::NonRecursive).unwrap();
-                debouncer.cache().add_root(plugin_dir, RecursiveMode::NonRecursive);
-            }
-            Err(e) => error!(?e, "Can't watch plugin dir"),
-        }
-
-        // debouncer stops on drop (kills its bg thread) on drop. TODO how is this working, cause it's dropped by now?
-        //subsys.on_shutdown_requested().await;
-        info!("Plugins manager task got shutdown request");
-
-        Ok(())
+    if let Some(plugin_dir) = plugin_dir {
+        let fs = FsWatcher {
+            dir: plugin_dir.to_owned(),
+            ps: ps.clone(),
+        };
+        fs.initial_load();
+        // Unfortunately we have to spawn these early, but idk how else to do it - can't communicate dyn Watchers between fns, and use them to call watch(), which consumes self
+        // TODO: communicate them in separate, typed lists
+        handles.spawn(fs.watch(shutdown.clone()));
     }
+
+    (Watchers { handles, shutdown }, Manager { ps: ps.clone() })
 }
 
 #[derive(Clone)]
@@ -117,7 +49,6 @@ pub struct Manager {
     // - ofc the real soltuion is the pluginInfo type, and can just return an empty vec of it from get_info()
     ps: Arc<RwLock<Vec<WasmPlugin>>>,
 }
-
 impl Manager {
     // TODO: best practice is not to return these guards. Otoh we don't really wanna clone the contents.
     // Stop being lazy and build an Info type, so we don't have to clone the actual plugin & store
@@ -151,6 +82,85 @@ impl Manager {
                 }
             })
             .collect()
+    }
+}
+
+#[async_trait]
+trait Watcher {
+    fn initial_load(&self);
+    async fn watch(self, shutdown: CancellationToken) -> Result<(), anyhow::Error>;
+}
+
+pub struct Watchers {
+    handles: JoinSet<Result<(), anyhow::Error>>,
+    shutdown: CancellationToken,
+}
+impl Watchers {
+    pub async fn watch(mut self, subsys: SubsystemHandle) -> Result<(), anyhow::Error> {
+        tokio::select! {
+            Some(res) = self.handles.join_next() => { error!("Watcher returned early: {res:?}"); res? },
+            _ = subsys.on_shutdown_requested() => {
+                info!("Plugins Watchers Manager got shutdown request");
+                self.handles.abort_all();
+                self.shutdown.cancel();
+                Ok(())
+            },
+        }
+    }
+}
+
+pub struct FsWatcher {
+    dir: String,
+    ps: Arc<RwLock<Vec<WasmPlugin>>>,
+}
+#[async_trait]
+impl Watcher for FsWatcher {
+    fn initial_load(&self) {
+        // TODO: canon path here
+        // notify doesn't seem to have a mode where it emits Create events for existing files, so we read the dir here.
+        info!(self.dir, "Loading initial plugins");
+        self.ps.write().unwrap().extend(match fs::read_dir(self.dir.clone()) {
+            Ok(entries) => entries.filter_map(|e| e.ok()).filter_map(|dent| WasmPlugin::new(&dent.path())).collect(),
+            Err(e) => {
+                error!(?e, "Can't read plugin dir");
+                vec![]
+            }
+        });
+    }
+
+    async fn watch(self, shutdown: CancellationToken) -> Result<(), anyhow::Error> {
+        let ps = self.ps.clone(); // give closure its own copy, cause it runs on a background thread so can't reason about lifetimes
+
+        let plugin_dir = Path::new(&self.dir).canonicalize()?;
+        info!(?plugin_dir, "Plugin manager watching");
+
+        let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |result: DebounceEventResult| match result {
+            Err(errors) => errors.iter().for_each(|error| error!(?error, "directory watch")),
+            Ok(events) => {
+                debug!(?events, "directory watch");
+                // TODO: handle deletes etc
+                // TODO: reload when the file changes
+                ps.write().unwrap().extend(
+                    events
+                        .into_iter()
+                        .filter(|e| e.kind == EventKind::Create(notify_debouncer_full::notify::event::CreateKind::File))
+                        .flat_map(move |event| event.paths.clone().into_iter().filter_map(|path| WasmPlugin::new(&path))),
+                );
+            }
+        })
+        .unwrap();
+
+        debouncer.watcher().watch(&plugin_dir, RecursiveMode::NonRecursive).unwrap();
+        debouncer.cache().add_root(plugin_dir, RecursiveMode::NonRecursive);
+
+        // debouncer auto-starts (doesn't return a Future), and stops (kills its bg thread) on drop.
+
+        // TODO: is there an intrinsic way to know we've been aborted? Abort just kills everything that's blocked in await? Meaning we just need to await on... nothing. A very long time, or our own token that we never cancel, or smth
+        // - or use graceful_shutdown's NestedSubsystem stuff
+        shutdown.cancelled().await;
+        info!("Plugins manager task got shutdown request");
+
+        Ok(())
     }
 }
 

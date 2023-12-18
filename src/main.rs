@@ -81,11 +81,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
         .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
         .start("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys))
-        // Either: https://tokio.rs/tokio/tutorial/channels,
-        // Or: derive clone on the thing, rather than Arc'ing (dyn-clone crate)
-        // all this cloning! ^^ Reason about it. Think all these objects should take Arc<T>
-        // explcitly (remove Arcs from the structs).
-        // Or ideally a reader object
+        // TODO all this cloning! ^^ Reason about it. Think all these objects should take Arc<T> explcitly (remove Arcs from the structs).
         .start("plugin_manager", move |subsys: SubsystemHandle| plugins_watcher.watch(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
