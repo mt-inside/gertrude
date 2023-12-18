@@ -14,7 +14,8 @@ MELANGE := "melange"
 APKO    := "apko"
 
 tools-install:
-	rustup component add rustfmt
+	rustup toolchain install nightly
+	rustup component add rustfmt --toolchain nightly
 	rustup component add clippy
 	rustup component add llvm-tools-preview
 	cargo install grcov
