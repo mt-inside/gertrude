@@ -12,7 +12,7 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::*;
 
-use crate::{karma::Karma, plugins::Foo};
+use crate::{karma::Karma, plugins::Manager};
 
 #[derive(Error, Debug)]
 pub enum AdminError {
@@ -24,10 +24,10 @@ pub enum AdminError {
 
 pub struct Admin {
     k: Karma,
-    ps: Foo,
+    ps: Manager,
 }
 impl Admin {
-    pub fn new(k: Karma, ps: Foo) -> Self {
+    pub fn new(k: Karma, ps: Manager) -> Self {
         Self { k, ps }
     }
 
@@ -71,10 +71,10 @@ impl KarmaService for KarmaSrv {
 }
 
 struct PluginsSrv {
-    ps_mgr: Foo,
+    ps_mgr: Manager,
 }
 impl PluginsSrv {
-    fn new(ps_mgr: Foo) -> Self {
+    fn new(ps_mgr: Manager) -> Self {
         Self { ps_mgr }
     }
 }

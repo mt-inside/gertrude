@@ -1,18 +1,18 @@
 /* TODO
  * - use dyn Trait for plugins
  * - optinoally run an ident server, attesting to who she is - doesn't seem relevant any more? Can't even see the ~ in irssi
+ * - dat WASM func for get-json
  * - Plugins for
  *   - applying s/ regex to the last message, and printing the result, or "your regex doesn't work, oaf"
  *   - stock price
  *   - recording every spotify link send, with sender
  *   - bbc news article titles
  *   - any link to an image type - run an image classifier over it
+ *   - github link - print eg gist name&description
  */
 
 // Feature annotations have to be in the create root, ie here.
-// Opt in to unstable Path::file_prefix, which is used in admin.
-#![feature(path_file_prefix)]
-//#![feature(async_fn_in_trait)]
+#![feature(path_file_prefix)] // Opt in to unstable Path::file_prefix, which is used in admin.
 
 mod admin;
 mod chatbot;
@@ -71,17 +71,22 @@ async fn main() -> Result<(), anyhow::Error> {
         .init();
 
     let metrics = metrics::Metrics::new();
-    let plugins = plugins::new_manager(args.plugin_dir.as_deref());
+    let (plugins_watcher, plugins_manager) = plugins::new_plugins(args.plugin_dir.as_deref());
     let karma = karma::Karma::from_file(args.persist_path.as_deref(), metrics.clone());
     let srv = http_srv::HTTPSrv::new(args.http_addr.clone(), metrics.clone());
-    let adm = admin::Admin::new(karma.clone(), plugins.clone());
-    let bot = chatbot::Chatbot::new(args.clone(), karma.clone(), plugins.clone(), metrics.clone());
+    let adm = admin::Admin::new(karma.clone(), plugins_manager.clone());
+    let bot = chatbot::Chatbot::new(args.clone(), karma.clone(), plugins_manager.clone(), metrics.clone());
 
     Toplevel::new()
         .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
         .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
         .start("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys))
-        .start("plugin_manager", move |subsys: SubsystemHandle| async move { plugins.watch(subsys) })
+        // Either: https://tokio.rs/tokio/tutorial/channels,
+        // Or: derive clone on the thing, rather than Arc'ing (dyn-clone crate)
+        // all this cloning! ^^ Reason about it. Think all these objects should take Arc<T>
+        // explcitly (remove Arcs from the structs).
+        // Or ideally a reader object
+        .start("plugin_manager", move |subsys: SubsystemHandle| plugins_watcher.watch(subsys))
         .catch_signals()
         .handle_shutdown_requests(Duration::from_millis(5000))
         .await

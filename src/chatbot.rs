@@ -1,3 +1,8 @@
+//TODO: split this into
+// - dispatcher
+// - chat handler
+// - DM handler
+
 use std::collections::VecDeque;
 
 use futures::prelude::*;
@@ -18,17 +23,17 @@ use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
 
 use super::Args;
-use crate::{karma::Karma, metrics::Metrics, plugins::Foo};
+use crate::{karma::Karma, metrics::Metrics, plugins::Manager};
 
 pub struct Chatbot {
     args: Args,
     karma: Karma,
-    plugins: Foo,
+    plugins: Manager,
     metrics: Metrics,
 }
 
 impl Chatbot {
-    pub fn new(args: Args, karma: Karma, plugins: Foo, metrics: Metrics) -> Self {
+    pub fn new(args: Args, karma: Karma, plugins: Manager, metrics: Metrics) -> Self {
         Self { args, karma, plugins, metrics }
     }
 

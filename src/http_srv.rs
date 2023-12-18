@@ -70,7 +70,7 @@ async fn handle_health(data: actix_web::web::Data<SrvData>, _req: HttpRequest) -
         "health" => "ok",
         "name" => crate::NAME,
         "version" => crate::VERSION,
-        "start_time" => &start_time_rendered,
-        "uptime" => &uptime_rendered,
+        "start_time" => &start_time_rendered, // TODO format this nicely.
+        "uptime" => &uptime_rendered, // TODO: unwrap, format in human units.
     ])
 }
