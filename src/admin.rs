@@ -93,7 +93,8 @@ impl PluginsService for PluginsSrv {
                     // TODO: plugins should have to impliment a name function (no, see below), to avoid this nastyness. Can then also print it when they're loaded. Version too.
                     // - Is this what wasmpack does? YES. builds to wasm, makes JS wrapper files, makes npm package.json. Load plugins this: decompress, read package.json (expect to be npm-compat), filter files list to *.wasm, assert only 1, load. Use name etc from package.json.
                     // Can make these with wasm-pack: need to set metadata in cargo.toml, then call wasm-pack pack
-                    name: p.path.file_prefix().map(|p| p.to_string_lossy().to_string()).unwrap_or("<unknown>".to_owned()),
+                    // TODO: use file_prefix when it hits stable: https://github.com/rust-lang/rust/issues/86319
+                    name: p.path.file_stem().map(|p| p.to_string_lossy().to_string()).unwrap_or("<unknown>".to_owned()),
                     path: p.path.to_string_lossy().to_string(),
                     size: p.size.unwrap_or(0),
                     loaded_time: Some(p.loaded_time.into()),

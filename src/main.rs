@@ -12,7 +12,6 @@
  */
 
 // Feature annotations have to be in the create root, ie here.
-#![feature(path_file_prefix)] // Opt in to unstable Path::file_prefix, which is used in admin.
 
 mod admin;
 mod chatbot;
