@@ -1,6 +1,5 @@
-use std::time::SystemTime;
-
 use actix_web::{dev::Server, get, middleware, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use chrono::prelude::*;
 use maplit::hashmap;
 use tokio_graceful_shutdown::SubsystemHandle;
 use tracing::*;
@@ -10,7 +9,7 @@ use super::metrics::{handle_metrics, Metrics};
 #[derive(Clone)]
 pub struct SrvData {
     pub metrics: Metrics,
-    start_time: SystemTime,
+    start_time: DateTime<Utc>,
 }
 
 pub struct HTTPSrv {
@@ -22,7 +21,7 @@ impl HTTPSrv {
     pub fn new(addr: String, metrics: Metrics) -> Self {
         let data = SrvData {
             metrics: metrics.clone(),
-            start_time: SystemTime::now(),
+            start_time: Utc::now(),
         };
         Self { addr, data }
     }
@@ -63,14 +62,34 @@ impl HTTPSrv {
 
 #[get("/healthz")]
 async fn handle_health(data: actix_web::web::Data<SrvData>, _req: HttpRequest) -> impl Responder {
-    let start_time_rendered = format!("{:?}", data.start_time);
-    let uptime_rendered = format!("{:?}", SystemTime::now().duration_since(data.start_time));
+    let start_time_rendered = data.start_time.to_string();
+    let uptime_rendered = fmt_duration(Utc::now() - data.start_time);
 
     HttpResponse::Ok().json(hashmap![
         "health" => "ok",
         "name" => crate::NAME,
         "version" => crate::VERSION,
-        "start_time" => &start_time_rendered, // TODO format this nicely.
-        "uptime" => &uptime_rendered, // TODO: unwrap, format in human units.
+        "start_time" => &start_time_rendered,
+        "uptime" => &uptime_rendered,
     ])
+}
+
+fn fmt_duration(p: chrono::Duration) -> String {
+    let s = p.num_seconds();
+    let (d, s) = (s / (60 * 60 * 24), s % (60 * 60 * 24));
+    let (h, s) = (s / (60 * 60), s % (60 * 60));
+    let (m, s) = (s / 60, s % 60);
+
+    let mut ret = String::new();
+    if d != 0 {
+        ret += &format!("{d}d");
+    }
+    if h != 0 {
+        ret += &format!("{h:02}h");
+    }
+    if m != 0 {
+        ret += &format!("{m:02}m");
+    }
+    ret += &format!("{s:02}s");
+    ret
 }
