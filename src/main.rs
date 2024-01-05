@@ -22,7 +22,7 @@ mod plugins;
 
 use clap::Parser;
 use tokio::time::Duration;
-use tokio_graceful_shutdown::{SubsystemHandle, Toplevel};
+use tokio_graceful_shutdown::{SubsystemBuilder, SubsystemHandle, Toplevel};
 use tracing::*;
 use tracing_subscriber::{filter, prelude::*};
 
@@ -80,14 +80,15 @@ async fn main() -> Result<(), anyhow::Error> {
     let adm = admin::Admin::new(karma.clone(), plugins_manager.clone());
     let bot = chatbot::Chatbot::new(args.clone(), karma.clone(), plugins_manager.clone(), metrics.clone());
 
-    Toplevel::new()
-        .start("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys))
-        .start("http_server", move |subsys: SubsystemHandle| srv.serve(subsys))
-        .start("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys))
+    Toplevel::new(|s| async move {
+        s.start(SubsystemBuilder::new("irc_client", move |subsys: SubsystemHandle| bot.lurk(subsys)));
+        s.start(SubsystemBuilder::new("http_server", move |subsys: SubsystemHandle| srv.serve(subsys)));
+        s.start(SubsystemBuilder::new("grpc_server", move |subsys: SubsystemHandle| adm.serve(subsys)));
         // TODO all this cloning! ^^ Reason about it. Think all these objects should take Arc<T> explcitly (remove Arcs from the structs).
-        .start("plugin_manager", move |subsys: SubsystemHandle| plugins_watcher.watch(subsys))
-        .catch_signals()
-        .handle_shutdown_requests(Duration::from_millis(5000))
-        .await
-        .map_err(Into::into)
+        s.start(SubsystemBuilder::new("plugin_manager", move |subsys: SubsystemHandle| plugins_watcher.watch(subsys)));
+    })
+    .catch_signals()
+    .handle_shutdown_requests(Duration::from_millis(5000))
+    .await
+    .map_err(Into::into)
 }

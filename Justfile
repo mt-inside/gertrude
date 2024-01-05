@@ -23,9 +23,12 @@ tools-install-apt:
 	apt update && apt install -y protobuf-compiler
 
 lint:
-	cargo +nightly fmt --all
 	cargo check
 	cargo clippy -- -D warnings
+	cargo doc # will fail if there's link issues etc
+	cargo +nightly udeps --all-targets
+	# ideally wouldn't use --direct
+	cargo minimal-versions check --direct --workspace # check it builds with the min versions of all the deps (from their semver ranges)
 
 test: lint
 	cargo test --all
@@ -44,6 +47,9 @@ coverage-view: test-with-coverage
 	mkdir -p target/debug/coverage
 	grcov . -s . --binary-path target/debug/ -t html --branch --ignore-not-existing --keep-only 'src/*' -o target/debug/coverage/
 	open target/debug/coverage/html/index.html
+
+fmt:
+	cargo +nightly fmt --all
 
 build: test
 	cargo build
