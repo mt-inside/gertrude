@@ -47,6 +47,7 @@ pub struct Manager {
     // maybe it's all the Arcs. What's a nicer solution? Do try returning borrows of the Vec items
     // in FsWatcher, but I don't think it'll work
     // - ofc the real soltuion is the pluginInfo type, and can just return an empty vec of it from get_info()
+    //   - just use admin_proto's PluginInfo type for now
     ps: Arc<RwLock<Vec<WasmPlugin>>>,
 }
 impl Manager {
