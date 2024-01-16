@@ -22,10 +22,15 @@ tools-install:
 tools-install-apt:
 	apt update && apt install -y protobuf-compiler
 
+# non-blocking checks and advisories
+analyze:
+	cargo deny --all-features check
+
 lint:
+	cargo +nightly fmt --all --check
 	cargo check
-	cargo clippy -- -D warnings
-	cargo doc # will fail if there's link issues etc
+	cargo clippy --frozen --workspace --all-targets --all-features -- -D warnings
+	cargo doc --frozen --no-deps # will fail if there's link issues etc
 	cargo +nightly udeps --all-targets
 	# ideally wouldn't use --direct
 	cargo minimal-versions check --direct --workspace # check it builds with the min versions of all the deps (from their semver ranges)
