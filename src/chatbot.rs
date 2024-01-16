@@ -61,62 +61,68 @@ impl Chatbot {
             tokio::select! {
                 // TODO: match the other cases from stream.next() (None, Some(Err)), and log the
                 // error, reconnect. Read about the errors from this stream.
-                Some(Ok(message)) = stream.next() => {
-                    debug!(?message, "received");
+                i = stream.next() => {
+                    match i {
+                        Some(Ok(message)) => {
+                            debug!(?message, "Received");
 
-                    if let Command::PRIVMSG(ref recipient, ref text) = message.command {
-                        self.metrics.messages.with_label_values(&["privmsg"]).inc();
+                            if let Command::PRIVMSG(ref recipient, ref text) = message.command {
+                                self.metrics.messages.with_label_values(&["privmsg"]).inc();
 
-                        let nick = client.current_nickname();
-                        if let Some(dm) = get_dm(nick, recipient, text) {
-                            let from = message.source_nickname().unwrap();
-                            let to = message.response_target().unwrap();
+                                let nick = client.current_nickname();
+                                if let Some(dm) = get_dm(nick, recipient, text) {
+                                    let from = message.source_nickname().unwrap();
+                                    let to = message.response_target().unwrap();
 
-                            self.metrics.dms.with_label_values(&[from, to]).inc();
+                                    self.metrics.dms.with_label_values(&[from, to]).inc();
 
-                            let res = parse_dm(dm, &self.karma);
-                            match res {
-                                Ok(resp) => {
-                                    debug!(target = to, "Sending response");
-                                    client.send_privmsg(to, resp)?;
-                                },
-                                Err(e) => {
-                                    debug!(?e, "Error parsing DM");
-                                    client.send_privmsg(to, "unknown command / args")?;
-                                },
+                                    let res = parse_dm(dm, &self.karma);
+                                    match res {
+                                        Ok(resp) => {
+                                            debug!(target = to, "Sending response");
+                                            client.send_privmsg(to, resp)?;
+                                        },
+                                        Err(e) => {
+                                            debug!(?e, "Error parsing DM");
+                                            client.send_privmsg(to, "unknown command / args")?;
+                                        },
+                                    }
+                                } else {
+                                    if bcast.len() == 5 { bcast.pop_front(); }
+                                    bcast.push_back(text.clone());
+                                    bcast.make_contiguous();
+
+                                    let to = message.response_target().unwrap();
+
+                                    let res = parse_chat(text);
+                                    match res {
+                                        Ok(biases) => { debug!("Chat parsed ok");
+                                            // TODO: track the number of karma-- alteration++ per message (most will be 0)
+                                            self.karma.bias_from(biases);
+                                        },
+                                        Err(e) => error!(?e, "Error parsing chat"),
+                                    }
+
+                                    // See if any of the plugins want to say anything
+                                    self.plugins.handle_privmsg(
+                                        &bcast.iter()
+                                        .map(String::as_str)
+                                        .collect::<Vec<&str>>()
+                                    ).iter()
+                                    .map(|reply| client.send_privmsg(to, reply))
+                                    .collect::<Result<Vec<_>,_>>()?;
+                                }
+
+                            } else if let Command::PING(ref srv1, ref _srv2) = message.command {
+                                self.metrics.messages.with_label_values(&["ping"]).inc();
+                                self.metrics.pings.with_label_values(&[srv1]).inc();
+                            } else if let Command::PONG(ref srv1, ref _srv2) = message.command {
+                                self.metrics.messages.with_label_values(&["pong"]).inc();
+                                self.metrics.pongs.with_label_values(&[srv1]).inc();
                             }
-                        } else {
-                            if bcast.len() == 5 { bcast.pop_front(); }
-                            bcast.push_back(text.clone());
-                            bcast.make_contiguous();
-
-                            let to = message.response_target().unwrap();
-
-                            let res = parse_chat(text);
-                            match res {
-                                Ok(biases) => { debug!("Chat parsed ok");
-                                    // TODO: track the number of karma-- alteration++ per message (most will be 0)
-                                    self.karma.bias_from(biases);
-                                },
-                                Err(e) => error!(?e, "Error parsing chat"),
-                            }
-
-                            // See if any of the plugins want to say anything
-                            self.plugins.handle_privmsg(
-                                &bcast.iter()
-                                .map(String::as_str)
-                                .collect::<Vec<&str>>()
-                            ).iter()
-                            .map(|reply| client.send_privmsg(to, reply))
-                            .collect::<Result<Vec<_>,_>>()?;
-                        }
-
-                    } else if let Command::PING(ref srv1, ref _srv2) = message.command {
-                        self.metrics.messages.with_label_values(&["ping"]).inc();
-                        self.metrics.pings.with_label_values(&[srv1]).inc();
-                    } else if let Command::PONG(ref srv1, ref _srv2) = message.command {
-                        self.metrics.messages.with_label_values(&["pong"]).inc();
-                        self.metrics.pongs.with_label_values(&[srv1]).inc();
+                        },
+                        Some(Err(e)) => error!(?e, "Client stream error. TODO reconnect"),
+                        None => warn!("End of client stream; reconnect?"),
                     }
                 },
                 _ = subsys.on_shutdown_requested() => {
