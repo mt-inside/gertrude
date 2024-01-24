@@ -20,6 +20,8 @@ tools-install:
 	rustup component add llvm-tools-preview
 	cargo install grcov
 	cargo install cargo-udeps
+	cargo install cargo-minimal-versions
+	cargo install cargo-hack
 tools-install-apt:
 	apt update && apt install -y protobuf-compiler
 
