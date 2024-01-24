@@ -140,7 +140,8 @@ impl Watcher for FsWatcher {
             Ok(events) => {
                 debug!(?events, "directory watch");
                 // TODO: handle deletes etc
-                // TODO: reload when the file changes
+                // TODO: reload when the file changes (currently we get dup'd Plugins)
+                // TODO: canonicalize paths at some early point (prolly in this fn), cause we currently end up with some plugins thinking they have abs paths, and some rel (those loaded at startup? - check that fn)
                 ps.write().unwrap().extend(
                     events
                         .into_iter()

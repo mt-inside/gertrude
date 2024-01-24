@@ -59,8 +59,6 @@ impl Chatbot {
 
         loop {
             tokio::select! {
-                // TODO: match the other cases from stream.next() (None, Some(Err)), and log the
-                // error, reconnect. Read about the errors from this stream.
                 i = stream.next() => {
                     match i {
                         Some(Ok(message)) => {
