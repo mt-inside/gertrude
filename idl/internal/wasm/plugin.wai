@@ -1,1 +1,1 @@
-handle-privmsg: func(msg: list<string>) -> option<string>
+handle-privmsg: func(msgs: list<string>) -> option<string>
