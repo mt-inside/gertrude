@@ -26,12 +26,12 @@ tools-install:
 	cargo install cargo-udeps
 	cargo install cargo-minimal-versions
 	cargo install cargo-hack
-	if [[ $(uname -s) == "Linux" && $(lsb_release -is) == "Ubuntu" ]]; then
+	if command -v apt > /dev/null 2>&1; then
 		apt update && apt install -y protobuf-compiler
-	elif [[ $(uname -s) == "Darwin" ]]; then
+	elif command -v brew > /dev/null 2>&1; then
 		brew install protobuf
 	else
-		echo "Unsupported OS/Distro"
+		echo "Unsupported package manager"
 	fi
 
 # non-blocking checks and advisories
