@@ -13,7 +13,11 @@ CGR_ARCHS := "aarch64" # amd64,x86,armv7 - will fail cause no wolfi packages for
 MELANGE := "melange"
 APKO    := "apko"
 
+build-env:
+	docker run -ti --rm -v ${PWD}:/work rust
+
 tools-install:
+	#!/bin/bash
 	rustup toolchain install nightly
 	rustup component add rustfmt --toolchain nightly
 	rustup component add clippy
@@ -22,8 +26,13 @@ tools-install:
 	cargo install cargo-udeps
 	cargo install cargo-minimal-versions
 	cargo install cargo-hack
-tools-install-apt:
-	apt update && apt install -y protobuf-compiler
+	if [[ $(uname -s) == "Linux" && $(lsb_release -is) == "Ubuntu" ]]; then
+		apt update && apt install -y protobuf-compiler
+	elif [[ $(uname -s) == "Darwin" ]]; then
+		brew install protobuf
+	else
+		echo "Unsupported OS/Distro"
+	fi
 
 # non-blocking checks and advisories
 analyze:
